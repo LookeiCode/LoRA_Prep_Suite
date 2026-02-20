@@ -240,7 +240,36 @@ class ImageCanvas(QWidget):
         crop_bottom = max(crop_top + 1, min(crop_bottom, oh))
 
         return (crop_left, crop_top, crop_right, crop_bottom)
+    
+class CropTile(QPushButton):
+    def __init__(self, crop_type: CropType, parent=None):
+        super().__init__(crop_type.label, parent)
+        self.crop_type = crop_type
+        self.completed = False
+        self.setCheckable(True)
+        self.setMinimumHeight(60)
+        self.update_style()
 
+    def update_style(self):
+        base = self.crop_type.color.name()
+        border = "4px solid white" if self.isChecked() else "2px solid black"
+
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {base};
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                border: {border};
+            }}
+        """)
+
+    def mark_completed(self, state: bool):
+        self.completed = state
+        if state:
+            self.setText(f"{self.crop_type.label} ✔")
+        else:
+            self.setText(self.crop_type.label)
 
 class CropStudio(QMainWindow):
     def __init__(self):
@@ -268,27 +297,6 @@ class CropStudio(QMainWindow):
 
         btn_input.clicked.connect(self.pick_input_folder)
         btn_output.clicked.connect(self.pick_output_folder)
-
-        # --- Crop type radio buttons ---
-        crop_group_box = QGroupBox("Crop Type")
-        crop_layout = QHBoxLayout()
-        self.crop_button_group = QButtonGroup(self)
-        self.crop_button_group.setExclusive(True)
-
-        for i, ct in enumerate(CROP_TYPES):
-            rb = QRadioButton(f"{ct.label} ({ct.suffix})")
-            if i == 0:
-                rb.setChecked(True)
-            # tiny color cue using stylesheet
-            rb.setStyleSheet(
-                f"QRadioButton::indicator {{ width: 14px; height: 14px; }}"
-                f"QRadioButton {{ color: #EAEAEA; }}"
-            )
-            self.crop_button_group.addButton(rb, i)
-            crop_layout.addWidget(rb)
-
-        crop_group_box.setLayout(crop_layout)
-        self.crop_button_group.idClicked.connect(self.on_crop_type_changed)
 
         # --- Output format dropdown ---
         self.format_combo = QComboBox()
@@ -340,7 +348,29 @@ class CropStudio(QMainWindow):
         top_layout.addLayout(folder_row)
         top_layout.addWidget(self.input_label)
         top_layout.addWidget(self.output_label)
-        top_layout.addWidget(crop_group_box)
+
+        # --- Crop type tiles ---
+        tile_layout = QHBoxLayout()
+        self.tile_buttons = []
+        self.tile_group = QButtonGroup(self)
+        self.tile_group.setExclusive(True)
+
+        for i, ct in enumerate(CROP_TYPES):
+            tile = CropTile(ct, self)
+
+            if i == 0:
+                tile.setChecked(True)
+                self.current_crop_type = ct
+                self.canvas.set_crop_color(ct.color)
+
+            tile.clicked.connect(self.handle_tile_click)
+
+            self.tile_group.addButton(tile, i)
+            tile_layout.addWidget(tile)
+            self.tile_buttons.append(tile)
+
+        top_layout.addLayout(tile_layout)
+
         top_layout.addWidget(self.status_label)
 
         root = QWidget()
@@ -443,11 +473,9 @@ class CropStudio(QMainWindow):
             f"Image {self.index + 1}/{len(self.images)} — {os.path.basename(path)} ({ow}×{oh})"
         )
 
-    # ------------------ Crop type changes ------------------
-
-    def on_crop_type_changed(self, idx: int):
-        self.current_crop_type = CROP_TYPES[idx]
-        self.canvas.set_crop_color(self.current_crop_type.color)
+        # reset tile completion for new image
+        for b in self.tile_buttons:
+            b.mark_completed(False)
 
     # ------------------ Navigation ------------------
 
@@ -505,7 +533,6 @@ class CropStudio(QMainWindow):
             pil = ImageOps.exif_transpose(pil)
             cropped = pil.crop(crop_box)
 
-            # If saving as JPG, ensure RGB
             if out_format == "JPEG" and cropped.mode in ("RGBA", "LA"):
                 cropped = cropped.convert("RGB")
             elif out_format == "JPEG" and cropped.mode not in ("RGB", "L"):
@@ -517,12 +544,13 @@ class CropStudio(QMainWindow):
             elif out_format == "PNG":
                 save_kwargs.update({"optimize": True})
 
-            # Avoid accidental overwrite:
             if os.path.exists(out_path):
-                # Make a unique name
                 i = 2
                 while True:
-                    candidate = os.path.join(self.output_dir, f"{base}{self.current_crop_type.suffix}_{i}{out_ext}")
+                    candidate = os.path.join(
+                        self.output_dir,
+                        f"{base}{self.current_crop_type.suffix}_{i}{out_ext}"
+                    )
                     if not os.path.exists(candidate):
                         out_path = candidate
                         break
@@ -530,20 +558,25 @@ class CropStudio(QMainWindow):
 
             cropped.save(out_path, format=out_format, **save_kwargs)
 
+            # mark tile completed
+            for b in self.tile_buttons:
+                if b.crop_type == self.current_crop_type:
+                    b.mark_completed(True)
+
         except Exception as e:
             QMessageBox.critical(self, "Save failed", f"Could not save crop.\n\n{e}")
             return
-
-        # keep selection or reset? (I recommend reset so you don’t accidentally reuse it)
+        
         self.canvas.clear_selection()
 
-        # status update
-        self.status_label.setText(
-            f"Saved: {os.path.basename(out_path)}  |  {self.index + 1}/{len(self.images)} — {os.path.basename(src_path)}"
-        )
+    def handle_tile_click(self):
+        button = self.sender()
+        idx = self.tile_group.id(button)
+        self.current_crop_type = CROP_TYPES[idx]
+        self.canvas.set_crop_color(self.current_crop_type.color)
 
-        if self.auto_advance.isChecked():
-            self.next_image()
+        for b in self.tile_buttons:
+            b.update_style()        
 
 
 def main():
