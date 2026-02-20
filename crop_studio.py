@@ -17,9 +17,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QMessageBox,
     QCheckBox,
-    QGroupBox,
     QButtonGroup,
-    QRadioButton,
+    QTabWidget,
 )
 
 from PIL import Image, ImageOps
@@ -37,10 +36,10 @@ class CropType:
 
 
 CROP_TYPES = [
-    CropType("full",  "Full Body", "_full",  QColor(220, 20, 60)),   # red-ish
-    CropType("thigh", "Thigh Up",  "_thigh", QColor(255, 215, 0)),   # yellow
-    CropType("torso", "Torso Up",  "_torso", QColor(30, 144, 255)),  # blue
-    CropType("face",  "Face",      "_face",  QColor(0, 200, 120)),   # green
+    CropType("face",  "Face",      "_face",  QColor(0, 200, 120)),  #green
+    CropType("torso", "Torso Up",  "_torso", QColor(30, 144, 255)), #blue
+    CropType("thigh", "Thigh Up",  "_thigh", QColor(255, 215, 0)),  #yellow
+    CropType("full",  "Full Body", "_full",  QColor(220, 20, 60)),  #red
 ]
 
 
@@ -56,20 +55,19 @@ class ImageCanvas(QWidget):
     def __init__(self):
         super().__init__()
         self.setMouseTracking(True)
+        self.setCursor(Qt.CrossCursor)
         self.setMinimumSize(640, 480)
 
         self._pixmap: Optional[QPixmap] = None
-        self._img_size_px: Optional[Tuple[int, int]] = None  # (w, h) of the original image after EXIF transpose
+        self._img_size_px: Optional[Tuple[int, int]] = None  # (w, h) after EXIF transpose
 
-        # Display rect where pixmap is drawn (computed each paint)
         self._draw_rect: Optional[QRectF] = None
 
-        # Selection
         self._dragging = False
         self._drag_start: Optional[QPointF] = None
         self._drag_end: Optional[QPointF] = None
 
-        self._crop_color = CROP_TYPES[0].color  # default red
+        self._crop_color = CROP_TYPES[0].color
 
     def set_crop_color(self, color: QColor):
         self._crop_color = color
@@ -82,7 +80,7 @@ class ImageCanvas(QWidget):
         self.update()
 
     def has_image(self) -> bool:
-        return self._pixmap is not None and self._img_size_px is not None
+        return self._pixmap is not None and self._img_size_px is not None and not self._pixmap.isNull()
 
     def set_image(self, pixmap: QPixmap, original_size_px: Tuple[int, int]):
         self._pixmap = pixmap
@@ -91,7 +89,7 @@ class ImageCanvas(QWidget):
         self.update()
 
     def _image_draw_rect(self) -> Optional[QRectF]:
-        if not self._pixmap:
+        if not self._pixmap or self._pixmap.isNull():
             return None
 
         w = self.width()
@@ -102,7 +100,6 @@ class ImageCanvas(QWidget):
         if pm_w <= 0 or pm_h <= 0 or w <= 0 or h <= 0:
             return None
 
-        # scale to fit while preserving aspect
         scale = min(w / pm_w, h / pm_h)
         draw_w = pm_w * scale
         draw_h = pm_h * scale
@@ -172,7 +169,7 @@ class ImageCanvas(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(18, 18, 18))
 
-        if not self._pixmap:
+        if not self._pixmap or self._pixmap.isNull():
             painter.setPen(QColor(200, 200, 200))
             painter.drawText(self.rect(), Qt.AlignCenter, "Select an input folder to load images.")
             return
@@ -180,13 +177,10 @@ class ImageCanvas(QWidget):
         draw_rect = self._image_draw_rect()
         self._draw_rect = draw_rect
 
-        # Draw image
         painter.drawPixmap(draw_rect, self._pixmap, QRectF(self._pixmap.rect()))
 
-        # Draw selection
         sel = self._selection_rect()
         if sel and sel.width() > 2 and sel.height() > 2:
-            # semi-transparent fill
             fill = QColor(self._crop_color)
             fill.setAlpha(60)
             painter.fillRect(sel, fill)
@@ -197,10 +191,6 @@ class ImageCanvas(QWidget):
             painter.drawRect(sel)
 
     def get_crop_box_in_original_px(self) -> Optional[Tuple[int, int, int, int]]:
-        """
-        Returns crop box (left, top, right, bottom) in ORIGINAL image pixels.
-        Selection is clamped to drawn image area.
-        """
         if not self.has_image():
             return None
         if not self._draw_rect:
@@ -215,7 +205,6 @@ class ImageCanvas(QWidget):
         dr = self._draw_rect
         ow, oh = self._img_size_px
 
-        # clamp selection to draw rect (extra safety)
         left = max(sel.left(), dr.left())
         top = max(sel.top(), dr.top())
         right = min(sel.right(), dr.right())
@@ -224,7 +213,6 @@ class ImageCanvas(QWidget):
         if right <= left or bottom <= top:
             return None
 
-        # map from display coords -> original px
         scale_x = ow / dr.width()
         scale_y = oh / dr.height()
 
@@ -233,14 +221,14 @@ class ImageCanvas(QWidget):
         crop_right = int(round((right - dr.left()) * scale_x))
         crop_bottom = int(round((bottom - dr.top()) * scale_y))
 
-        # clamp to valid bounds
         crop_left = max(0, min(crop_left, ow - 1))
         crop_top = max(0, min(crop_top, oh - 1))
         crop_right = max(crop_left + 1, min(crop_right, ow))
         crop_bottom = max(crop_top + 1, min(crop_bottom, oh))
 
         return (crop_left, crop_top, crop_right, crop_bottom)
-    
+
+
 class CropTile(QPushButton):
     def __init__(self, crop_type: CropType, parent=None):
         super().__init__(crop_type.label, parent)
@@ -252,7 +240,13 @@ class CropTile(QPushButton):
 
     def update_style(self):
         base = self.crop_type.color.name()
-        border = "4px solid white" if self.isChecked() else "2px solid black"
+
+        if self.completed:
+            border = "5px solid #00ff00"  # thick neon green
+        elif self.isChecked():
+            border = "4px solid white"
+        else:
+            border = "2px solid #222"
 
         self.setStyleSheet(f"""
             QPushButton {{
@@ -270,6 +264,8 @@ class CropTile(QPushButton):
             self.setText(f"{self.crop_type.label} ✔")
         else:
             self.setText(self.crop_type.label)
+        self.update_style()
+
 
 class CropStudio(QMainWindow):
     def __init__(self):
@@ -288,76 +284,32 @@ class CropStudio(QMainWindow):
 
         self.canvas = ImageCanvas()
 
-        # --- Top controls (folders + status) ---
+        # --- Controls ---
         self.input_label = QLabel("Input: (not set)")
         self.output_label = QLabel("Output: (not set)")
 
-        btn_input = QPushButton("Select Input Folder")
-        btn_output = QPushButton("Select Output Folder")
+        self.btn_input = QPushButton("Select Input Folder")
+        self.btn_output = QPushButton("Select Output Folder")
 
-        btn_input.clicked.connect(self.pick_input_folder)
-        btn_output.clicked.connect(self.pick_output_folder)
+        self.btn_input.clicked.connect(self.pick_input_folder)
+        self.btn_output.clicked.connect(self.pick_output_folder)
 
-        # --- Output format dropdown ---
         self.format_combo = QComboBox()
-        self.format_combo.addItems([
-            "Keep original",
-            "PNG",
-            "JPG",
-        ])
+        self.format_combo.addItems(["Keep original", "PNG", "JPG"])
 
         self.auto_advance = QCheckBox("Auto-advance after Save")
         self.auto_advance.setChecked(False)
 
-        # --- Navigation + actions ---
         self.status_label = QLabel("No images loaded.")
         self.status_label.setStyleSheet("color: #EAEAEA;")
 
-        btn_prev = QPushButton("◀ Prev")
-        btn_next = QPushButton("Next ▶")
-        btn_reset = QPushButton("Reset Crop")
-        btn_save = QPushButton("Save Crop (S)")
-        btn_skip = QPushButton("Skip (N)")
-
-        btn_prev.clicked.connect(self.prev_image)
-        btn_next.clicked.connect(self.next_image)
-        btn_reset.clicked.connect(self.canvas.clear_selection)
-        btn_save.clicked.connect(self.save_crop)
-        btn_skip.clicked.connect(self.next_image)
-
-        nav_layout = QHBoxLayout()
-        nav_layout.addWidget(btn_prev)
-        nav_layout.addWidget(btn_next)
-        nav_layout.addSpacing(20)
-        nav_layout.addWidget(btn_reset)
-        nav_layout.addWidget(btn_save)
-        nav_layout.addWidget(btn_skip)
-        nav_layout.addStretch(1)
-        nav_layout.addWidget(QLabel("Output format:"))
-        nav_layout.addWidget(self.format_combo)
-        nav_layout.addSpacing(12)
-        nav_layout.addWidget(self.auto_advance)
-
-        # --- Main layout ---
-        top_layout = QVBoxLayout()
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(btn_input)
-        folder_row.addWidget(btn_output)
-        folder_row.addStretch(1)
-
-        top_layout.addLayout(folder_row)
-        top_layout.addWidget(self.input_label)
-        top_layout.addWidget(self.output_label)
-
-        # --- Crop type tiles ---
-        tile_layout = QHBoxLayout()
-        self.tile_buttons = []
+        # --- Crop type tiles (created once; placed in left panel) ---
+        self.tile_buttons: List[CropTile] = []
         self.tile_group = QButtonGroup(self)
         self.tile_group.setExclusive(True)
 
         for i, ct in enumerate(CROP_TYPES):
             tile = CropTile(ct, self)
-
             if i == 0:
                 tile.setChecked(True)
                 self.current_crop_type = ct
@@ -366,39 +318,78 @@ class CropStudio(QMainWindow):
             tile.clicked.connect(self.handle_tile_click)
 
             self.tile_group.addButton(tile, i)
-            tile_layout.addWidget(tile)
             self.tile_buttons.append(tile)
 
-        top_layout.addLayout(tile_layout)
+        # --- Right panel buttons (stacked) ---
+        self.btn_prev = QPushButton("◀ Prev (Q)")
+        self.btn_cancel = QPushButton("Cancel Crop (Esc)")
+        self.btn_save = QPushButton("Save Crop (S)")
+        self.btn_next = QPushButton("Next ▶ (W)")
 
-        top_layout.addWidget(self.status_label)
+        self.btn_prev.clicked.connect(self.prev_image)
+        self.btn_next.clicked.connect(self.next_image)
+        self.btn_cancel.clicked.connect(self.canvas.clear_selection)
+        self.btn_save.clicked.connect(self.save_crop)
 
-        root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.addLayout(top_layout)
-        root_layout.addWidget(self.canvas, stretch=1)
-        root_layout.addLayout(nav_layout)
+        nav_layout = QVBoxLayout()
+        nav_layout.addWidget(self.btn_next)
+        nav_layout.addWidget(self.btn_prev)
+        nav_layout.addWidget(self.btn_save)
+        nav_layout.addWidget(self.btn_cancel)
+        nav_layout.addSpacing(20)
+        nav_layout.addWidget(QLabel("Output format:"))
+        nav_layout.addWidget(self.format_combo)
+        nav_layout.addWidget(self.auto_advance)
+        nav_layout.addStretch(1)
 
-        self.setCentralWidget(root)
+        # --- Tabs ---
+        tabs = QTabWidget()
 
-        # --- Keyboard shortcuts via actions ---
-        act_save = QAction(self)
-        act_save.setShortcut("S")
-        act_save.triggered.connect(self.save_crop)
-        self.addAction(act_save)
+        # Crop Studio tab layout: [Tiles] [Canvas] [Status+Buttons]
+        crop_root = QWidget()
+        main_layout = QHBoxLayout(crop_root)
 
-        act_next = QAction(self)
-        act_next.setShortcut("N")
-        act_next.triggered.connect(self.next_image)
-        self.addAction(act_next)
+        left_panel = QVBoxLayout()
+        for tile in self.tile_buttons:
+            left_panel.addWidget(tile)
+        left_panel.addStretch(1)
 
-        act_reset = QAction(self)
-        act_reset.setShortcut("Backspace")
-        act_reset.triggered.connect(self.canvas.clear_selection)
-        self.addAction(act_reset)
+        center_panel = QVBoxLayout()
+        center_panel.addWidget(self.canvas, stretch=1)
 
-        # set initial crop color
-        self.canvas.set_crop_color(self.current_crop_type.color)
+        right_panel = QVBoxLayout()
+        right_panel.addWidget(self.status_label)
+        right_panel.addSpacing(8)
+        right_panel.addLayout(nav_layout)
+
+        main_layout.addLayout(left_panel, 1)
+        main_layout.addLayout(center_panel, 5)
+        main_layout.addLayout(right_panel, 2)
+
+        tabs.addTab(crop_root, "Crop Studio")
+
+        # Settings tab
+        settings_tab = QWidget()
+        settings_layout = QVBoxLayout(settings_tab)
+
+        self.btn_input.setFixedSize(300, 60)
+        self.btn_output.setFixedSize(300, 60)
+
+        settings_layout.addStretch(1)
+
+        settings_layout.addWidget(self.btn_input, alignment=Qt.AlignCenter)
+        settings_layout.addWidget(self.input_label, alignment=Qt.AlignCenter)
+
+        settings_layout.addSpacing(40)
+
+        settings_layout.addWidget(self.btn_output, alignment=Qt.AlignCenter)
+        settings_layout.addWidget(self.output_label, alignment=Qt.AlignCenter)
+
+        settings_layout.addStretch(1)
+
+        tabs.addTab(settings_tab, "Settings")
+
+        self.setCentralWidget(tabs)
 
     # ------------------ Folder pickers ------------------
 
@@ -448,18 +439,13 @@ class CropStudio(QMainWindow):
         path = self.images[self.index]
         self.current_image_path = path
 
-        # Load with PIL for correct EXIF orientation and true original size
         pil = Image.open(path)
-        pil = ImageOps.exif_transpose(pil)  # fixes rotated JPEGs
+        pil = ImageOps.exif_transpose(pil)
         ow, oh = pil.size
 
-        # Convert PIL -> QPixmap
-        # Ensure we use RGB/RGBA in a safe way:
         if pil.mode not in ("RGB", "RGBA"):
             pil = pil.convert("RGB")
 
-        # Save into bytes? We'll do a quick in-memory conversion using PIL and Qt via temp approach
-        # (simple and reliable for phase 1)
         import io
         buf = io.BytesIO()
         pil.save(buf, format="PNG")
@@ -473,7 +459,6 @@ class CropStudio(QMainWindow):
             f"Image {self.index + 1}/{len(self.images)} — {os.path.basename(path)} ({ow}×{oh})"
         )
 
-        # reset tile completion for new image
         for b in self.tile_buttons:
             b.mark_completed(False)
 
@@ -521,7 +506,7 @@ class CropStudio(QMainWindow):
         elif fmt_choice == "PNG":
             out_ext = ".png"
             out_format = "PNG"
-        else:  # "JPG"
+        else:
             out_ext = ".jpg"
             out_format = "JPEG"
 
@@ -558,7 +543,6 @@ class CropStudio(QMainWindow):
 
             cropped.save(out_path, format=out_format, **save_kwargs)
 
-            # mark tile completed
             for b in self.tile_buttons:
                 if b.crop_type == self.current_crop_type:
                     b.mark_completed(True)
@@ -566,8 +550,11 @@ class CropStudio(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save failed", f"Could not save crop.\n\n{e}")
             return
-        
+
         self.canvas.clear_selection()
+
+        if self.auto_advance.isChecked():
+            self.next_image()
 
     def handle_tile_click(self):
         button = self.sender()
@@ -576,11 +563,130 @@ class CropStudio(QMainWindow):
         self.canvas.set_crop_color(self.current_crop_type.color)
 
         for b in self.tile_buttons:
-            b.update_style()        
+            b.update_style()
+
+    # ------------------ Keybinds ------------------
+
+    def select_crop_type(self, idx: int):
+        if idx < 0 or idx >= len(self.tile_buttons):
+            return
+        button = self.tile_buttons[idx]
+        button.setChecked(True)
+        self.current_crop_type = CROP_TYPES[idx]
+        self.canvas.set_crop_color(self.current_crop_type.color)
+
+        for b in self.tile_buttons:
+            b.update_style()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+
+        # Crop types 1–4
+        if key == Qt.Key_1:
+            self.select_crop_type(0)
+            event.accept()
+            return
+        if key == Qt.Key_2:
+            self.select_crop_type(1)
+            event.accept()
+            return
+        if key == Qt.Key_3:
+            self.select_crop_type(2)
+            event.accept()
+            return
+        if key == Qt.Key_4:
+            self.select_crop_type(3)
+            event.accept()
+            return
+
+        # Navigation
+        if key == Qt.Key_Q:
+            self.prev_image()
+            event.accept()
+            return
+
+        if key == Qt.Key_W:
+            self.next_image()
+            event.accept()
+            return
+
+        # Save
+        if key == Qt.Key_S:
+            self.save_crop()
+            event.accept()
+            return
+
+        # Cancel crop
+        if key == Qt.Key_Escape:
+            self.canvas.clear_selection()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+# ------------------ Dark Mode ------------------    
+
+def apply_dark_theme(app):
+    app.setStyleSheet("""
+        QWidget {
+            background-color: #2b2b2b;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+
+        QPushButton {
+            background-color: #3a3a3a;
+            border: 1px solid #555;
+            padding: 6px;
+        }
+
+        QPushButton:hover {
+            background-color: #4a4a4a;
+        }
+
+        QPushButton:pressed {
+            background-color: #5a5a5a;
+        }
+
+        QLabel {
+            color: #dcdcdc;
+        }
+
+        QComboBox {
+            background-color: #3a3a3a;
+            border: 1px solid #555;
+            padding: 4px;
+        }
+
+        QCheckBox {
+            spacing: 6px;
+        }
+
+        QGroupBox {
+            border: 1px solid #444;
+            margin-top: 10px;
+        }
+
+        QTabWidget::pane {
+            border: 1px solid #444;
+        }
+
+        QTabBar::tab {
+            background: #3a3a3a;
+            border: 1px solid #555;
+            padding: 8px 14px;
+            margin-right: 2px;
+        }
+
+        QTabBar::tab:selected {
+            background: #4a4a4a;
+        }
+    """)
 
 
 def main():
     app = QApplication(sys.argv)
+    apply_dark_theme(app)
     w = CropStudio()
     w.show()
     sys.exit(app.exec())
