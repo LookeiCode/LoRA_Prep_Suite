@@ -1,10 +1,10 @@
 import os
 import sys
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from PySide6.QtCore import Qt, QRectF, QPointF
-from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QAction
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QIntValidator
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -19,12 +19,19 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QButtonGroup,
     QTabWidget,
+    QLineEdit,
 )
 
 from PIL import Image, ImageOps
 
 
 SUPPORTED_EXTS = {".png", ".jpg", ".jpeg"}
+
+# ============================================================
+# Default training alignment (Kohya bucket math anchor)
+# UI lets user switch between 512 / 768 / 1024 / Custom.
+# ============================================================
+DEFAULT_TRAINING_RESOLUTION = 512
 
 
 @dataclass(frozen=True)
@@ -36,10 +43,10 @@ class CropType:
 
 
 CROP_TYPES = [
-    CropType("face",  "Face",      "_face",  QColor(0, 200, 120)),  #green
-    CropType("torso", "Torso Up",  "_torso", QColor(30, 144, 255)), #blue
-    CropType("thigh", "Thigh Up",  "_thigh", QColor(255, 215, 0)),  #yellow
-    CropType("full",  "Full Body", "_full",  QColor(220, 20, 60)),  #red
+    CropType("face",  "Face",      "_face",  QColor(0, 200, 120)),   # green
+    CropType("torso", "Torso Up",  "_torso", QColor(30, 144, 255)),  # blue
+    CropType("thigh", "Thigh Up",  "_thigh", QColor(255, 215, 0)),   # yellow
+    CropType("full",  "Full Body", "_full",  QColor(220, 20, 60)),   # red
 ]
 
 
@@ -60,7 +67,6 @@ class ImageCanvas(QWidget):
 
         self._pixmap: Optional[QPixmap] = None
         self._img_size_px: Optional[Tuple[int, int]] = None  # (w, h) after EXIF transpose
-
         self._draw_rect: Optional[QRectF] = None
 
         self._dragging = False
@@ -73,20 +79,31 @@ class ImageCanvas(QWidget):
         self._crop_color = color
         self.update()
 
+    def _notify_quality(self):
+        parent = self.window()
+        if hasattr(parent, "update_crop_quality"):
+            parent.update_crop_quality()
+
     def clear_selection(self):
         self._dragging = False
         self._drag_start = None
         self._drag_end = None
         self.update()
+        self._notify_quality()
 
     def has_image(self) -> bool:
-        return self._pixmap is not None and self._img_size_px is not None and not self._pixmap.isNull()
+        return (
+            self._pixmap is not None
+            and self._img_size_px is not None
+            and not self._pixmap.isNull()
+        )
 
     def set_image(self, pixmap: QPixmap, original_size_px: Tuple[int, int]):
         self._pixmap = pixmap
         self._img_size_px = original_size_px
         self.clear_selection()
         self.update()
+        self._notify_quality()
 
     def _image_draw_rect(self) -> Optional[QRectF]:
         if not self._pixmap or self._pixmap.isNull():
@@ -142,6 +159,7 @@ class ImageCanvas(QWidget):
         self._drag_start = pos
         self._drag_end = pos
         self.update()
+        self._notify_quality()
 
     def mouseMoveEvent(self, event):
         if not self._dragging:
@@ -156,14 +174,17 @@ class ImageCanvas(QWidget):
         pos = self._clamp_point_to_draw_rect(QPointF(event.position()), draw_rect)
         self._drag_end = pos
         self.update()
+        self._notify_quality()
 
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
         if not self._dragging:
             return
+
         self._dragging = False
         self.update()
+        self._notify_quality()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -242,7 +263,7 @@ class CropTile(QPushButton):
         base = self.crop_type.color.name()
 
         if self.completed:
-            border = "5px solid #00ff00"  # thick neon green
+            border = "5px solid #00ff00"
         elif self.isChecked():
             border = "4px solid white"
         else:
@@ -273,6 +294,9 @@ class CropStudio(QMainWindow):
         self.setWindowTitle("LoRA Prep Suite — Crop Studio (Phase 1)")
         self.setWindowState(Qt.WindowMaximized)
 
+        # ✅ dynamic training resolution (controlled by UI)
+        self.training_resolution: int = DEFAULT_TRAINING_RESOLUTION
+
         self.input_dir: Optional[str] = None
         self.output_dir: Optional[str] = None
 
@@ -281,7 +305,6 @@ class CropStudio(QMainWindow):
         self.current_image_path: Optional[str] = None
 
         self.current_crop_type: CropType = CROP_TYPES[0]
-
         self.canvas = ImageCanvas()
 
         # --- Controls ---
@@ -300,10 +323,13 @@ class CropStudio(QMainWindow):
         self.auto_advance = QCheckBox("Auto-advance after Save")
         self.auto_advance.setChecked(False)
 
+        self.use_subfolders = QCheckBox("Auto-create subfolders per crop type")
+        self.use_subfolders.setChecked(True)
+
         self.status_label = QLabel("No images loaded.")
         self.status_label.setStyleSheet("color: #EAEAEA;")
 
-        # --- Crop type tiles (created once; placed in left panel) ---
+        # --- Crop type tiles ---
         self.tile_buttons: List[CropTile] = []
         self.tile_group = QButtonGroup(self)
         self.tile_group.setExclusive(True)
@@ -319,6 +345,43 @@ class CropStudio(QMainWindow):
 
             self.tile_group.addButton(tile, i)
             self.tile_buttons.append(tile)
+
+        # --- Indicator UI (Framing Signal Strength) ---
+        self.signal_title = QLabel("Framing Signal Strength")
+        self.signal_title.setAlignment(Qt.AlignCenter)
+        self.signal_title.setStyleSheet("font-weight: bold;")
+        self.signal_title.setToolTip(
+            "This measures *bucket upscaling pressure*.\n"
+            "It is NOT a judgment of whether a crop is 'useful'.\n\n"
+            "Upscale factor = training_target / shortest_side.\n"
+            "Lower upscale = clearer signal for training.\n"
+            "Higher upscale = more blur/mush introduced by resizing."
+        )
+
+        self.quality_indicator = QLabel()
+        self.quality_indicator.setFixedSize(40, 40)
+        self.quality_indicator.setStyleSheet("background-color: gray; border-radius: 20px;")
+
+        self.dimension_label = QLabel("—")
+        self.dimension_label.setAlignment(Qt.AlignCenter)
+        self.dimension_label.setWordWrap(True)
+
+        # Prevent UI bounce / layout shifting:
+        self.dimension_label.setFixedWidth(220)
+        self.dimension_label.setMinimumHeight(52)
+
+        # ✅ training target selector
+        self.training_target_label = QLabel("Training target:")
+        self.training_target_combo = QComboBox()
+        self.training_target_combo.addItems(["512", "768", "1024", "Custom"])
+        self.training_target_combo.setCurrentText(str(DEFAULT_TRAINING_RESOLUTION))
+        self.training_target_combo.currentTextChanged.connect(self.on_training_target_changed)
+
+        self.custom_training_input = QLineEdit()
+        self.custom_training_input.setPlaceholderText("Enter resolution (e.g. 896)")
+        self.custom_training_input.setValidator(QIntValidator(64, 4096))
+        self.custom_training_input.hide()
+        self.custom_training_input.textChanged.connect(self.on_custom_training_changed)
 
         # --- Right panel buttons (stacked) ---
         self.btn_prev = QPushButton("◀ Prev (Q)")
@@ -340,6 +403,7 @@ class CropStudio(QMainWindow):
         nav_layout.addWidget(QLabel("Output format:"))
         nav_layout.addWidget(self.format_combo)
         nav_layout.addWidget(self.auto_advance)
+        nav_layout.addWidget(self.use_subfolders)
         nav_layout.addStretch(1)
 
         # --- Tabs ---
@@ -352,6 +416,17 @@ class CropStudio(QMainWindow):
         left_panel = QVBoxLayout()
         for tile in self.tile_buttons:
             left_panel.addWidget(tile)
+
+        left_panel.addSpacing(14)
+        left_panel.addWidget(self.signal_title)
+        left_panel.addWidget(self.quality_indicator, alignment=Qt.AlignCenter)
+        left_panel.addWidget(self.dimension_label)
+
+        left_panel.addSpacing(10)
+        left_panel.addWidget(self.training_target_label)
+        left_panel.addWidget(self.training_target_combo)
+        left_panel.addWidget(self.custom_training_input)
+
         left_panel.addStretch(1)
 
         center_panel = QVBoxLayout()
@@ -376,7 +451,6 @@ class CropStudio(QMainWindow):
         self.btn_output.setFixedSize(300, 60)
 
         settings_layout.addStretch(1)
-
         settings_layout.addWidget(self.btn_input, alignment=Qt.AlignCenter)
         settings_layout.addWidget(self.input_label, alignment=Qt.AlignCenter)
 
@@ -384,12 +458,43 @@ class CropStudio(QMainWindow):
 
         settings_layout.addWidget(self.btn_output, alignment=Qt.AlignCenter)
         settings_layout.addWidget(self.output_label, alignment=Qt.AlignCenter)
-
         settings_layout.addStretch(1)
 
         tabs.addTab(settings_tab, "Settings")
 
         self.setCentralWidget(tabs)
+
+        # initialize indicator
+        self.update_crop_quality()
+
+    # ------------------ Training target UI ------------------
+
+    def on_training_target_changed(self, text: str):
+        if text == "Custom":
+            self.custom_training_input.show()
+            self.custom_training_input.setFocus()
+            return
+
+        self.custom_training_input.hide()
+
+        try:
+            self.training_resolution = int(text)
+        except ValueError:
+            self.training_resolution = DEFAULT_TRAINING_RESOLUTION
+
+        self.update_crop_quality()
+
+    def on_custom_training_changed(self, text: str):
+        if not text.strip().isdigit():
+            return
+
+        val = int(text.strip())
+
+        if val < 64:
+            return
+
+        self.training_resolution = val
+        self.update_crop_quality()
 
     # ------------------ Folder pickers ------------------
 
@@ -428,6 +533,7 @@ class CropStudio(QMainWindow):
             self.current_image_path = None
             self.canvas.set_image(QPixmap(), (1, 1))
             self.status_label.setText("No supported images found in input folder.")
+            self.update_crop_quality()
             return
 
         self.show_image_at_index()
@@ -461,6 +567,8 @@ class CropStudio(QMainWindow):
 
         for b in self.tile_buttons:
             b.mark_completed(False)
+
+        self.update_crop_quality()
 
     # ------------------ Navigation ------------------
 
@@ -510,8 +618,15 @@ class CropStudio(QMainWindow):
             out_ext = ".jpg"
             out_format = "JPEG"
 
-        out_name = f"{base}{self.current_crop_type.suffix}{out_ext}"
-        out_path = os.path.join(self.output_dir, out_name)
+        # ✅ Add your crop-tag marker (_C) so scanner can treat these differently later
+        out_name = f"{base}{self.current_crop_type.suffix}_C{out_ext}"
+
+        if self.use_subfolders.isChecked():
+            subfolder = os.path.join(self.output_dir, self.current_crop_type.key)
+            os.makedirs(subfolder, exist_ok=True)
+            out_path = os.path.join(subfolder, out_name)
+        else:
+            out_path = os.path.join(self.output_dir, out_name)
 
         try:
             pil = Image.open(src_path)
@@ -529,13 +644,13 @@ class CropStudio(QMainWindow):
             elif out_format == "PNG":
                 save_kwargs.update({"optimize": True})
 
+            # avoid overwrite
             if os.path.exists(out_path):
                 i = 2
+                folder = os.path.dirname(out_path)
+                name_no_ext = os.path.splitext(out_name)[0]
                 while True:
-                    candidate = os.path.join(
-                        self.output_dir,
-                        f"{base}{self.current_crop_type.suffix}_{i}{out_ext}"
-                    )
+                    candidate = os.path.join(folder, f"{name_no_ext}_{i}{out_ext}")
                     if not os.path.exists(candidate):
                         out_path = candidate
                         break
@@ -556,6 +671,8 @@ class CropStudio(QMainWindow):
         if self.auto_advance.isChecked():
             self.next_image()
 
+    # ------------------ Crop type + indicator ------------------
+
     def handle_tile_click(self):
         button = self.sender()
         idx = self.tile_group.id(button)
@@ -564,6 +681,52 @@ class CropStudio(QMainWindow):
 
         for b in self.tile_buttons:
             b.update_style()
+
+        self.update_crop_quality()
+
+    def update_crop_quality(self):
+        """
+        Framing Signal Strength (bucket-aligned):
+        - We measure how much the crop must be upscaled to hit training_resolution.
+        - Upscale factor = training_resolution / shortest_side.
+        - The more we upscale, the more blur/mush we inject during training.
+        """
+        crop_box = self.canvas.get_crop_box_in_original_px()
+
+        if not crop_box:
+            self.quality_indicator.setStyleSheet("background-color: gray; border-radius: 20px;")
+            self.dimension_label.setText("—")
+            return
+
+        left, top, right, bottom = crop_box
+        width = right - left
+        height = bottom - top
+        shortest = max(1, min(width, height))
+
+        target = max(1, int(self.training_resolution))
+        upscale = target / shortest
+
+        # Color bands (signal strength)
+        # Green: low upscale pressure
+        # Yellow: moderate
+        # Orange: heavy
+        # Red: extreme
+        if upscale <= 1.70:
+            color = "#00ff00"
+        elif upscale <= 2.50:
+            color = "#ffd000"
+        elif upscale <= 3.50:
+            color = "#ff8800"
+        else:
+            color = "#ff0000"
+
+        self.quality_indicator.setStyleSheet(f"background-color: {color}; border-radius: 20px;")
+
+        # Keep it compact + non-bouncy
+        self.dimension_label.setText(
+            f"{width} × {height}\n"
+            f"Upscale → {upscale:.2f}×  (to {target}px)"
+        )
 
     # ------------------ Keybinds ------------------
 
@@ -578,53 +741,37 @@ class CropStudio(QMainWindow):
         for b in self.tile_buttons:
             b.update_style()
 
+        self.update_crop_quality()
+
     def keyPressEvent(self, event):
         key = event.key()
 
         # Crop types 1–4
         if key == Qt.Key_1:
-            self.select_crop_type(0)
-            event.accept()
-            return
+            self.select_crop_type(0); event.accept(); return
         if key == Qt.Key_2:
-            self.select_crop_type(1)
-            event.accept()
-            return
+            self.select_crop_type(1); event.accept(); return
         if key == Qt.Key_3:
-            self.select_crop_type(2)
-            event.accept()
-            return
+            self.select_crop_type(2); event.accept(); return
         if key == Qt.Key_4:
-            self.select_crop_type(3)
-            event.accept()
-            return
+            self.select_crop_type(3); event.accept(); return
 
         # Navigation
         if key == Qt.Key_Q:
-            self.prev_image()
-            event.accept()
-            return
-
+            self.prev_image(); event.accept(); return
         if key == Qt.Key_W:
-            self.next_image()
-            event.accept()
-            return
+            self.next_image(); event.accept(); return
 
         # Save
         if key == Qt.Key_S:
-            self.save_crop()
-            event.accept()
-            return
+            self.save_crop(); event.accept(); return
 
         # Cancel crop
         if key == Qt.Key_Escape:
-            self.canvas.clear_selection()
-            event.accept()
-            return
+            self.canvas.clear_selection(); event.accept(); return
 
         super().keyPressEvent(event)
 
-# ------------------ Dark Mode ------------------    
 
 def apply_dark_theme(app):
     app.setStyleSheet("""
@@ -653,6 +800,12 @@ def apply_dark_theme(app):
         }
 
         QComboBox {
+            background-color: #3a3a3a;
+            border: 1px solid #555;
+            padding: 4px;
+        }
+
+        QLineEdit {
             background-color: #3a3a3a;
             border: 1px solid #555;
             padding: 4px;
