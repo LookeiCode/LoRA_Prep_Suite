@@ -1,5 +1,8 @@
 import os
 import sys
+import cv2
+import mediapipe as mp
+import numpy as np
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict
 
@@ -545,6 +548,16 @@ class CropStudio(QMainWindow):
 
         self.setCentralWidget(tabs)
 
+        # ============================================================
+        # MediaPipe Pose Engine (Stage 2)
+        # ============================================================
+        self.mp_pose = mp.solutions.pose
+        self.pose_engine = self.mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=2,
+            enable_segmentation=False
+        )
+
         # initialize indicator + mode UI
         self.apply_mode_ui()
 
@@ -600,34 +613,136 @@ class CropStudio(QMainWindow):
  # ------------------ Auto (Stage 1 stub) ------------------
 
     def start_auto_cropping(self):
-        """
-        Stage 1: UI only.
-        Later stages will:
-          - run MediaPipe pose detection
-          - compute 4 crop boxes
-          - animate overlays
-          - autosave
-          - advance images
-          - progress + ETA
-        """
-        if not self.images:
-            QMessageBox.warning(self, "No images", "Load an input folder first.")
-            return
-        if not self.output_dir:
-            QMessageBox.warning(self, "No output folder", "Select an output folder first.")
+        test_image = self.images[self.index]
+        boxes = self.compute_sequential_boxes(test_image)
+
+        if not boxes:
+            QMessageBox.warning(self, "Pose Failed", "No pose detected.")
             return
 
-        total = len(self.images)
-        self.auto_progress.setMaximum(total)
-        self.auto_progress.setValue(0)
-        self.auto_progress_text.setText(f"0 / {total}")
-        self.auto_eta_label.setText("ETA: —")
+        print("POSE BOXES:")
+        for k, v in boxes.items():
+            print(k, v)
 
-        QMessageBox.information(
-            self,
-            "Auto Cropping (Stage 1)",
-            "Auto cropping UI is wired.\n\nNext stage will implement MediaPipe detection + crop generation."
-        )
+        QMessageBox.information(self, "Stage 2 Success", "Pose boxes computed.\nCheck CMD output.")
+
+    # ------------------ MediaPipe Pose Detection ------------------
+
+    def detect_pose_landmarks(self, image_path):
+        """
+        Runs MediaPipe Pose on a static image.
+        Returns:
+            (landmarks, width, height)
+        or
+            None if detection fails
+        """
+        img = cv2.imread(image_path)
+        if img is None:
+            return None
+
+        h, w = img.shape[:2]
+
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.pose_engine.process(img_rgb)
+
+        if not results.pose_landmarks:
+            return None
+
+        landmarks = []
+        for lm in results.pose_landmarks.landmark:
+            landmarks.append((int(lm.x * w), int(lm.y * h)))
+
+        return landmarks, w, h
+    
+    def compute_sequential_boxes(self, image_path):
+
+        """
+        Uses pose landmarks to compute 4 crop boxes:
+        full, thigh, torso, face.
+
+        Returns dict:
+            {
+                "full":  (l, t, r, b),
+                "thigh": (l, t, r, b),
+                "torso": (l, t, r, b),
+                "face":  (l, t, r, b),
+            }
+
+        Returns None if pose detection fails.
+
+        """
+
+        pose_data = self.detect_pose_landmarks(image_path)
+        if not pose_data:
+            return None
+
+        landmarks, w, h = pose_data
+
+        # Extract key joints
+        nose = landmarks[0]
+        l_shoulder = landmarks[11]
+        r_shoulder = landmarks[12]
+        l_hip = landmarks[23]
+        r_hip = landmarks[24]
+        l_knee = landmarks[25]
+        r_knee = landmarks[26]
+        l_ankle = landmarks[27]
+        r_ankle = landmarks[28]
+
+        # -------------------------
+        # Compute horizontal bounds
+        # -------------------------
+        xs = [pt[0] for pt in landmarks]
+        min_x = max(0, min(xs))
+        max_x = min(w, max(xs))
+
+        # Add small padding
+        pad_x = int((max_x - min_x) * 0.1)
+        min_x = max(0, min_x - pad_x)
+        max_x = min(w, max_x + pad_x)
+
+        # -------------------------
+        # Full body
+        # -------------------------
+        top_full = min(pt[1] for pt in landmarks)
+        bottom_full = max(pt[1] for pt in landmarks)
+
+        # -------------------------
+        # Thigh up (cut at knees)
+        # -------------------------
+        knee_y = max(l_knee[1], r_knee[1])
+        top_thigh = top_full
+        bottom_thigh = knee_y
+
+        # -------------------------
+        # Torso up (cut at hips)
+        # -------------------------
+        hip_y = max(l_hip[1], r_hip[1])
+        top_torso = top_full
+        bottom_torso = hip_y
+
+        # -------------------------
+        # Face (shoulder-based box)
+        # -------------------------
+        shoulder_width = abs(l_shoulder[0] - r_shoulder[0])
+        face_size = int(shoulder_width * 1.2)
+
+        face_center_x = nose[0]
+        face_center_y = nose[1]
+
+        half = face_size // 2
+
+        face_left = max(0, face_center_x - half)
+        face_right = min(w, face_center_x + half)
+        face_top = max(0, face_center_y - half)
+        face_bottom = min(h, face_center_y + half)
+
+        return {
+            "full":  (min_x, top_full,  max_x, bottom_full),
+            "thigh": (min_x, top_thigh, max_x, bottom_thigh),
+            "torso": (min_x, top_torso, max_x, bottom_torso),
+            "face":  (face_left, face_top, face_right, face_bottom),
+        }
 
     # ------------------ Training target UI ------------------
 
