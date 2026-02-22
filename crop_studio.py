@@ -3,7 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict
 
-from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QIntValidator
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QTabWidget,
     QLineEdit,
+    QProgressBar,
 )
 
 from PIL import Image, ImageOps
@@ -75,9 +76,17 @@ class ImageCanvas(QWidget):
 
         self._crop_color = CROP_TYPES[0].color
 
+        # When False, manual mouse crop is disabled (used for Auto mode)
+        self._interaction_enabled = True
+
     def set_crop_color(self, color: QColor):
         self._crop_color = color
         self.update()
+
+    def set_interaction_enabled(self, enabled: bool):
+        self._interaction_enabled = bool(enabled)
+        if not self._interaction_enabled:
+            self.clear_selection()
 
     def _notify_quality(self):
         parent = self.window()
@@ -141,6 +150,8 @@ class ImageCanvas(QWidget):
         return QPointF(x, y)
 
     def mousePressEvent(self, event):
+        if not self._interaction_enabled:
+            return
         if event.button() != Qt.LeftButton:
             return
         if not self.has_image():
@@ -383,6 +394,38 @@ class CropStudio(QMainWindow):
         self.custom_training_input.hide()
         self.custom_training_input.textChanged.connect(self.on_custom_training_changed)
 
+        # ============================================================
+        # Mode toggles (always visible under the signal area)
+        # ============================================================
+        self.manual_mode_cb = QCheckBox("Manual mode")
+        self.auto_mode_cb = QCheckBox("Automatic mode")
+
+        # Manual ON by default (per your spec)
+        self.manual_mode_cb.setChecked(True)
+        self.auto_mode_cb.setChecked(False)
+
+        self.manual_mode_cb.stateChanged.connect(self.on_mode_toggled)
+        self.auto_mode_cb.stateChanged.connect(self.on_mode_toggled)
+
+        # ============================================================
+        # Auto UI (shown only when Automatic mode is enabled)
+        # ============================================================
+        self.auto_start_btn = QPushButton("Start Cropping")
+        self.auto_start_btn.clicked.connect(self.start_auto_cropping)
+
+        self.auto_progress_text = QLabel("0 / 0")
+        self.auto_progress_text.setAlignment(Qt.AlignCenter)
+
+        self.auto_progress = QProgressBar()
+        self.auto_progress.setMinimum(0)
+        self.auto_progress.setValue(0)
+
+        self.auto_eta_label = QLabel("ETA: —")
+        self.auto_eta_label.setAlignment(Qt.AlignCenter)
+
+        # Placeholder timer (Stage 1: we wire UI, Stage 5: ETA logic)
+        self.auto_timer = QTimer(self)
+
         # --- Right panel buttons (stacked) ---
         self.btn_prev = QPushButton("◀ Prev (Q)")
         self.btn_cancel = QPushButton("Cancel Crop (Esc)")
@@ -413,21 +456,59 @@ class CropStudio(QMainWindow):
         crop_root = QWidget()
         main_layout = QHBoxLayout(crop_root)
 
+        # ============================================================
+        # LEFT PANEL: two sections that swap based on Manual/Auto mode
+        # ============================================================
         left_panel = QVBoxLayout()
+
+        # --- Manual section (your existing manual UI lives here) ---
+        self.manual_section = QWidget()
+        manual_layout = QVBoxLayout(self.manual_section)
+        manual_layout.setContentsMargins(0, 0, 0, 0)
+
         for tile in self.tile_buttons:
-            left_panel.addWidget(tile)
+            manual_layout.addWidget(tile)
 
-        left_panel.addSpacing(14)
-        left_panel.addWidget(self.signal_title)
-        left_panel.addWidget(self.quality_indicator, alignment=Qt.AlignCenter)
-        left_panel.addWidget(self.dimension_label)
+        manual_layout.addSpacing(14)
+        manual_layout.addWidget(self.signal_title)
+        manual_layout.addWidget(self.quality_indicator, alignment=Qt.AlignCenter)
+        manual_layout.addWidget(self.dimension_label)
 
+        manual_layout.addSpacing(10)
+        manual_layout.addWidget(self.training_target_label)
+        manual_layout.addWidget(self.training_target_combo)
+        manual_layout.addWidget(self.custom_training_input)
+
+        # --- Mode toggles always visible under the manual/auto sections ---
+        # (Per your spec: bottom-left under framing signal)
+        # We'll place them AFTER manual_section in the final layout.
+
+        # --- Auto section (only auto controls) ---
+        self.auto_section = QWidget()
+        auto_layout = QVBoxLayout(self.auto_section)
+        auto_layout.setContentsMargins(0, 0, 0, 0)
+
+        auto_layout.addWidget(self.auto_start_btn)
+        auto_layout.addSpacing(8)
+        auto_layout.addWidget(self.auto_progress_text)
+        auto_layout.addWidget(self.auto_progress)
+        auto_layout.addSpacing(6)
+        auto_layout.addWidget(self.auto_eta_label)
+        auto_layout.addStretch(1)
+
+        # Add sections to left panel
+        left_panel.addWidget(self.manual_section)
+        left_panel.addWidget(self.auto_section)
+
+        # Mode toggles always visible
         left_panel.addSpacing(10)
-        left_panel.addWidget(self.training_target_label)
-        left_panel.addWidget(self.training_target_combo)
-        left_panel.addWidget(self.custom_training_input)
+        left_panel.addWidget(self.manual_mode_cb)
+        left_panel.addWidget(self.auto_mode_cb)
 
         left_panel.addStretch(1)
+
+        # Initial visibility
+        self.auto_section.hide()
 
         center_panel = QVBoxLayout()
         center_panel.addWidget(self.canvas, stretch=1)
@@ -464,8 +545,89 @@ class CropStudio(QMainWindow):
 
         self.setCentralWidget(tabs)
 
-        # initialize indicator
-        self.update_crop_quality()
+        # initialize indicator + mode UI
+        self.apply_mode_ui()
+
+# ------------------ Mode UI ------------------
+
+    def on_mode_toggled(self):
+        """
+        Enforces:
+        - Exactly one mode is active at a time (manual XOR auto)
+        - Manual is the fallback if user tries to turn both off
+        """
+        # Block recursion loops by checking sender state
+        manual = self.manual_mode_cb.isChecked()
+        auto = self.auto_mode_cb.isChecked()
+
+        # If both are ON, keep the one the user just clicked ON, turn the other OFF.
+        sender = self.sender()
+        if manual and auto:
+            if sender == self.manual_mode_cb:
+                self.auto_mode_cb.setChecked(False)
+                auto = False
+            elif sender == self.auto_mode_cb:
+                self.manual_mode_cb.setChecked(False)
+                manual = False
+
+        # If both OFF, force Manual ON
+        if not manual and not auto:
+            self.manual_mode_cb.setChecked(True)
+            manual = True
+
+        self.apply_mode_ui()
+
+    def apply_mode_ui(self):
+        """
+        Shows/hides manual vs auto panels and enables/disables canvas interaction.
+        """
+        manual = self.manual_mode_cb.isChecked()
+        auto = self.auto_mode_cb.isChecked()
+
+        if manual:
+            self.manual_section.show()
+            self.auto_section.hide()
+            self.canvas.set_interaction_enabled(True)
+            self.update_crop_quality()
+        else:
+            # auto
+            self.manual_section.hide()
+            self.auto_section.show()
+            self.canvas.set_interaction_enabled(False)
+            self.canvas.clear_selection()
+
+
+ # ------------------ Auto (Stage 1 stub) ------------------
+
+    def start_auto_cropping(self):
+        """
+        Stage 1: UI only.
+        Later stages will:
+          - run MediaPipe pose detection
+          - compute 4 crop boxes
+          - animate overlays
+          - autosave
+          - advance images
+          - progress + ETA
+        """
+        if not self.images:
+            QMessageBox.warning(self, "No images", "Load an input folder first.")
+            return
+        if not self.output_dir:
+            QMessageBox.warning(self, "No output folder", "Select an output folder first.")
+            return
+
+        total = len(self.images)
+        self.auto_progress.setMaximum(total)
+        self.auto_progress.setValue(0)
+        self.auto_progress_text.setText(f"0 / {total}")
+        self.auto_eta_label.setText("ETA: —")
+
+        QMessageBox.information(
+            self,
+            "Auto Cropping (Stage 1)",
+            "Auto cropping UI is wired.\n\nNext stage will implement MediaPipe detection + crop generation."
+        )
 
     # ------------------ Training target UI ------------------
 
