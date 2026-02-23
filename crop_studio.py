@@ -560,6 +560,16 @@ class CropStudio(QMainWindow):
 
         # initialize indicator + mode UI
         self.apply_mode_ui()
+        
+        # ------------------ Auto Animation State ------------------
+        self.auto_current_index = 0
+        self.auto_boxes = None
+        self.auto_step = 0
+        self.auto_running = False
+
+        # ------------------ Timer ------------------
+        self.auto_anim_timer = QTimer(self)
+        self.auto_anim_timer.timeout.connect(self.auto_step_forward)
 
 # ------------------ Mode UI ------------------
 
@@ -609,22 +619,144 @@ class CropStudio(QMainWindow):
             self.canvas.set_interaction_enabled(False)
             self.canvas.clear_selection()
 
+    # ------------------ Auto ------------------
 
- # ------------------ Auto (Stage 1 stub) ------------------
+    def process_next_image(self):
 
-    def start_auto_cropping(self):
-        test_image = self.images[self.index]
-        boxes = self.compute_sequential_boxes(test_image)
+            if self.auto_current_index >= len(self.images):
+                self.auto_running = False
+                QMessageBox.information(self, "Done", "Auto cropping complete.")
+                return
 
-        if not boxes:
-            QMessageBox.warning(self, "Pose Failed", "No pose detected.")
+            self.index = self.auto_current_index
+            self.show_image_at_index()
+
+            image_path = self.images[self.auto_current_index]
+            boxes = self.compute_sequential_boxes(image_path)
+
+            if not boxes:
+                self.auto_current_index += 1
+                self.auto_progress.setValue(self.auto_current_index)
+                self.auto_progress_text.setText(
+                    f"{self.auto_current_index} / {len(self.images)}"
+                )
+                QApplication.processEvents()
+                self.process_next_image()
+                return
+
+            self.auto_boxes = boxes
+            self.auto_step = 0
+
+            # start animation
+            self.auto_anim_timer.start(200)  # 400ms per crop
+
+
+    def auto_step_forward(self):
+
+        crop_order = ["full", "thigh", "torso", "face"]
+
+        if self.auto_step >= len(crop_order):
+            self.auto_anim_timer.stop()
+
+            # After animation finishes → save crops
+            self.save_auto_crops(self.images[self.auto_current_index])
+
+            self.auto_current_index += 1
+            self.auto_progress.setValue(self.auto_current_index)
+            self.auto_progress_text.setText(
+                f"{self.auto_current_index} / {len(self.images)}"
+            )
+
+            QApplication.processEvents()
+            self.process_next_image()
             return
 
-        print("POSE BOXES:")
-        for k, v in boxes.items():
-            print(k, v)
+        crop_key = crop_order[self.auto_step]
+        box = self.auto_boxes[crop_key]
 
-        QMessageBox.information(self, "Stage 2 Success", "Pose boxes computed.\nCheck CMD output.")
+        # Set overlay color based on crop type
+        for ct in CROP_TYPES:
+            if ct.key == crop_key:
+                self.canvas.set_crop_color(ct.color)
+                break
+
+        self.show_overlay_box(box)
+
+        self.auto_step += 1
+
+    def start_auto_cropping(self):
+
+        if not self.images:
+            QMessageBox.warning(self, "No images", "Load an input folder first.")
+            return
+
+        if not self.output_dir:
+            QMessageBox.warning(self, "No output folder", "Select an output folder first.")
+            return
+
+        self.auto_running = True
+        self.auto_current_index = 0
+        self.auto_progress.setMaximum(len(self.images))
+        self.auto_progress.setValue(0)
+        self.auto_progress_text.setText(f"0 / {len(self.images)}")
+
+        self.process_next_image()
+
+    # ------------------ Show Auto Crops ------------------
+
+    def show_overlay_box(self, box):
+
+        left, top, right, bottom = box
+
+        # Convert original px box to canvas coordinates
+        dr = self.canvas._image_draw_rect()
+        if not dr:
+            return
+
+        ow, oh = self.canvas._img_size_px
+
+        scale_x = dr.width() / ow
+        scale_y = dr.height() / oh
+
+        x1 = dr.left() + left * scale_x
+        y1 = dr.top() + top * scale_y
+        x2 = dr.left() + right * scale_x
+        y2 = dr.top() + bottom * scale_y
+
+        self.canvas._drag_start = QPointF(x1, y1)
+        self.canvas._drag_end = QPointF(x2, y2)
+
+        self.canvas.update()
+
+    # ------------------ Save Auto Crops ------------------
+
+    def save_auto_crops(self, image_path):
+
+        for crop_key, crop_box in self.auto_boxes.items():
+
+            left, top, right, bottom = crop_box
+
+            try:
+                pil = Image.open(image_path)
+                pil = ImageOps.exif_transpose(pil)
+                cropped = pil.crop((left, top, right, bottom))
+
+                base = os.path.splitext(os.path.basename(image_path))[0]
+                out_ext = ".png"
+                out_format = "PNG"
+                out_name = f"{base}_{crop_key}_C{out_ext}"
+
+                if self.use_subfolders.isChecked():
+                    subfolder = os.path.join(self.output_dir, crop_key)
+                    os.makedirs(subfolder, exist_ok=True)
+                    out_path = os.path.join(subfolder, out_name)
+                else:
+                    out_path = os.path.join(self.output_dir, out_name)
+
+                cropped.save(out_path, format=out_format)
+
+            except Exception as e:
+                print("Auto save failed:", e)
 
     # ------------------ MediaPipe Pose Detection ------------------
 
@@ -702,24 +834,39 @@ class CropStudio(QMainWindow):
         max_x = min(w, max_x + pad_x)
 
         # -------------------------
-        # Full body
+        # Full body (add head padding)
         # -------------------------
-        top_full = min(pt[1] for pt in landmarks)
+
+        raw_top = min(pt[1] for pt in landmarks)
         bottom_full = max(pt[1] for pt in landmarks)
+
+        # Estimate head size from shoulder width
+        shoulder_width = abs(l_shoulder[0] - r_shoulder[0])
+        head_padding = int(shoulder_width * 0.75)  # adjust if needed
+
+        top_full = max(0, raw_top - head_padding)
 
         # -------------------------
         # Thigh up (cut at knees)
         # -------------------------
         knee_y = max(l_knee[1], r_knee[1])
+
+        # Move crop slightly upward (10% of body height)
+        body_height = bottom_full - top_full
+        thigh_adjust = int(body_height * 0.10)
+
         top_thigh = top_full
-        bottom_thigh = knee_y
+        bottom_thigh = max(top_full, knee_y - thigh_adjust)
 
         # -------------------------
         # Torso up (cut at hips)
         # -------------------------
         hip_y = max(l_hip[1], r_hip[1])
+
+        torso_adjust = int(body_height * 0.08)
+
         top_torso = top_full
-        bottom_torso = hip_y
+        bottom_torso = max(top_full, hip_y - torso_adjust)
 
         # -------------------------
         # Face (shoulder-based box)
