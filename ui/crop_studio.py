@@ -42,9 +42,11 @@ class CropTile(QPushButton):
         """)
 
     def mark_completed(self, state: bool):
+        self.blockSignals(True)
         self.completed = state
         self.setText(f"{self.crop_type.label} ✔" if state else self.crop_type.label)
         self.update_style()
+        self.blockSignals(False)
 
 
 class CropStudioTab(QWidget):
@@ -61,6 +63,9 @@ class CropStudioTab(QWidget):
 
         self.pose = PoseDetector()
         self.canvas = ImageCanvas()
+        # Wire canvas quality updates directly to this tab — avoids the
+        # window() lookup which would return MainWindow, not CropStudioTab
+        self.canvas._quality_callback = self.update_crop_quality
 
         self._build_ui()
         self._build_auto_state()
@@ -82,7 +87,9 @@ class CropStudioTab(QWidget):
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["Keep original", "PNG", "JPG"])
-        self.auto_advance   = QCheckBox("Auto-advance after Save")
+        self.format_combo.setFocusPolicy(Qt.ClickFocus)
+        self.format_combo.activated.connect(lambda: self.window().setFocus())
+        self.auto_advance   = QCheckBox("Auto-advance after all crops complete")
         self.use_subfolders = QCheckBox("Auto-create subfolders per crop type")
         self.use_subfolders.setChecked(True)
 
@@ -300,11 +307,22 @@ class CropStudioTab(QWidget):
             self.auto_section.hide()
             self.canvas.set_interaction_enabled(True)
             self.update_crop_quality()
+            # Restore auto-advance checkbox to user control
+            self.auto_advance.setEnabled(True)
+            self.auto_advance.setStyleSheet("")
         else:
             self.manual_section.hide()
             self.auto_section.show()
             self.canvas.set_interaction_enabled(False)
             self.canvas.clear_selection()
+            # In auto mode, advance is always on and cannot be turned off
+            self.auto_advance.setChecked(True)
+            self.auto_advance.setEnabled(False)
+            self.auto_advance.setStyleSheet("""
+                QCheckBox { color: #aaa; }
+                QCheckBox::indicator { border: 1px solid #444; background-color: #1a1a1a; }
+                QCheckBox::indicator:checked { background-color: #444; border: 1px solid #555; }
+            """)
 
     # ──────────────────────────────────────────────
     # NAV LOCK
@@ -462,14 +480,12 @@ class CropStudioTab(QWidget):
     # ──────────────────────────────────────────────
     def show_overlay_box(self, box):
         left, top, right, bottom = box
-        dr = self.canvas._image_draw_rect()
-        if not dr:
+        ow, oh = self.canvas._img_size_px
+        if not ow or not oh:
             return
-        ow, oh  = self.canvas._img_size_px
-        sx, sy  = dr.width() / ow, dr.height() / oh
-        self.canvas._drag_start = QPointF(dr.left() + left  * sx, dr.top() + top    * sy)
-        self.canvas._drag_end   = QPointF(dr.left() + right * sx, dr.top() + bottom * sy)
-        self.canvas.update()
+        self.canvas.set_overlay_box_normalized(
+            left / ow, top / oh, right / ow, bottom / oh
+        )
 
     def save_auto_crops_from(self, image_path: str, boxes: dict):
         for crop_key, crop_box in boxes.items():
@@ -621,26 +637,36 @@ class CropStudioTab(QWidget):
             if out_format == "JPEG" and cropped.mode not in ("RGB", "L"):
                 cropped = cropped.convert("RGB")
             kwargs = {"quality": 95, "subsampling": 0, "optimize": True} if out_format == "JPEG" else {"optimize": True}
+
+            # Collision avoidance — find a free filename
             if os.path.exists(out_path):
+                stem   = os.path.splitext(out_name)[0]
+                folder = os.path.dirname(out_path)
                 i = 2
-                stem = os.path.splitext(out_name)[0]
                 while True:
-                    candidate = os.path.join(os.path.dirname(out_path), f"{stem}_{i}{out_ext}")
+                    candidate = os.path.join(folder, f"{stem}_{i}{out_ext}")
                     if not os.path.exists(candidate):
                         out_path = candidate
                         break
                     i += 1
+
             cropped.save(out_path, format=out_format, **kwargs)
+
             for b in self.tile_buttons:
                 if b.crop_type == self.current_crop_type:
                     b.mark_completed(True)
+
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
             return
 
         self.canvas.clear_selection()
+
+        # Auto-advance only when every crop tile is marked done
         if self.auto_advance.isChecked():
-            self.next_image()
+            all_done = all(b.completed for b in self.tile_buttons)
+            if all_done:
+                self.next_image()
 
     # ──────────────────────────────────────────────
     # CROP TYPE + SIGNAL STRENGTH
@@ -650,7 +676,9 @@ class CropStudioTab(QWidget):
         self.current_crop_type = CROP_TYPES[idx]
         self.canvas.set_crop_color(self.current_crop_type.color)
         for b in self.tile_buttons:
+            b.blockSignals(True)
             b.update_style()
+            b.blockSignals(False)
         self.update_crop_quality()
 
     def update_crop_quality(self):

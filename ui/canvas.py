@@ -1,4 +1,3 @@
-import io
 from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt, QRectF, QPointF
@@ -9,20 +8,28 @@ from core.config import CROP_TYPES
 
 
 class ImageCanvas(QWidget):
+    """
+    Selection is stored as normalized image-space coords (0.0-1.0)
+    so it survives canvas resizes, dropdown clicks, layout shifts, etc.
+    """
     def __init__(self):
         super().__init__()
         self.setMouseTracking(True)
         self.setCursor(Qt.CrossCursor)
         self.setMinimumSize(640, 480)
 
-        self._pixmap:              Optional[QPixmap]          = None
-        self._img_size_px:         Optional[Tuple[int, int]]  = None
-        self._draw_rect:           Optional[QRectF]           = None
-        self._dragging:            bool                       = False
-        self._drag_start:          Optional[QPointF]          = None
-        self._drag_end:            Optional[QPointF]          = None
-        self._crop_color:          QColor                     = CROP_TYPES[0].color
-        self._interaction_enabled: bool                       = True
+        self._pixmap:              Optional[QPixmap]         = None
+        self._img_size_px:         Optional[Tuple[int, int]] = None
+        self._dragging:            bool                      = False
+        self._crop_color:          QColor                    = CROP_TYPES[0].color
+        self._interaction_enabled: bool                      = True
+        self._quality_callback                               = None
+
+        # Selection stored in normalized image space (0.0–1.0)
+        self._sel_x1: Optional[float] = None
+        self._sel_y1: Optional[float] = None
+        self._sel_x2: Optional[float] = None
+        self._sel_y2: Optional[float] = None
 
     def set_crop_color(self, color: QColor):
         self._crop_color = color
@@ -34,37 +41,35 @@ class ImageCanvas(QWidget):
             self.clear_selection()
 
     def _notify_quality(self):
-        parent = self.window()
-        if hasattr(parent, "update_crop_quality"):
-            parent.update_crop_quality()
+        if self._quality_callback:
+            self._quality_callback()
+        elif hasattr(self.window(), "update_crop_quality"):
+            self.window().update_crop_quality()
 
     def clear_selection(self):
-        self._dragging   = False
-        self._drag_start = None
-        self._drag_end   = None
+        self._dragging = False
+        self._sel_x1 = self._sel_y1 = self._sel_x2 = self._sel_y2 = None
         self.update()
         self._notify_quality()
 
     def has_image(self) -> bool:
-        return (
-            self._pixmap is not None
-            and self._img_size_px is not None
-            and not self._pixmap.isNull()
-        )
+        return self._pixmap is not None and not self._pixmap.isNull() and self._img_size_px is not None
+
+    def has_selection(self) -> bool:
+        return None not in (self._sel_x1, self._sel_y1, self._sel_x2, self._sel_y2)
 
     def set_image(self, pixmap: QPixmap, original_size_px: Tuple[int, int]):
         self._pixmap      = pixmap
         self._img_size_px = original_size_px
         self.clear_selection()
         self.update()
-        self._notify_quality()
 
     def _image_draw_rect(self) -> Optional[QRectF]:
-        if not self._pixmap or self._pixmap.isNull():
+        if not self.has_image():
             return None
-        w, h     = self.width(), self.height()
-        pm_w     = self._pixmap.width()
-        pm_h     = self._pixmap.height()
+        w, h = self.width(), self.height()
+        pm_w = self._pixmap.width()
+        pm_h = self._pixmap.height()
         if pm_w <= 0 or pm_h <= 0 or w <= 0 or h <= 0:
             return None
         scale  = min(w / pm_w, h / pm_h)
@@ -72,17 +77,24 @@ class ImageCanvas(QWidget):
         draw_h = pm_h * scale
         return QRectF((w - draw_w) / 2, (h - draw_h) / 2, draw_w, draw_h)
 
-    def _selection_rect(self) -> Optional[QRectF]:
-        if self._drag_start is None or self._drag_end is None:
-            return None
-        x1, y1 = self._drag_start.x(), self._drag_start.y()
-        x2, y2 = self._drag_end.x(),   self._drag_end.y()
-        return QRectF(min(x1,x2), min(y1,y2), abs(x2-x1), abs(y2-y1))
+    def _screen_to_norm(self, pos: QPointF, dr: QRectF) -> Tuple[float, float]:
+        """Convert screen pos to normalized image coords (0.0–1.0), clamped."""
+        nx = (pos.x() - dr.left()) / dr.width()
+        ny = (pos.y() - dr.top())  / dr.height()
+        return max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny))
 
-    def _clamp_to_rect(self, p: QPointF, r: QRectF) -> QPointF:
-        return QPointF(
-            min(max(p.x(), r.left()), r.right()),
-            min(max(p.y(), r.top()),  r.bottom()),
+    def _norm_to_screen(self, nx: float, ny: float, dr: QRectF) -> QPointF:
+        """Convert normalized image coords back to screen pos."""
+        return QPointF(dr.left() + nx * dr.width(), dr.top() + ny * dr.height())
+
+    def _selection_screen_rect(self, dr: QRectF) -> Optional[QRectF]:
+        if not self.has_selection():
+            return None
+        p1 = self._norm_to_screen(self._sel_x1, self._sel_y1, dr)
+        p2 = self._norm_to_screen(self._sel_x2, self._sel_y2, dr)
+        return QRectF(
+            min(p1.x(), p2.x()), min(p1.y(), p2.y()),
+            abs(p2.x() - p1.x()), abs(p2.y() - p1.y())
         )
 
     def mousePressEvent(self, event):
@@ -90,16 +102,14 @@ class ImageCanvas(QWidget):
             return
         if not self.has_image():
             return
-        dr = self._image_draw_rect()
-        if not dr:
-            return
+        dr  = self._image_draw_rect()
         pos = QPointF(event.position())
-        if not dr.contains(pos):
+        if not dr or not dr.adjusted(-1, -1, 1, 1).contains(pos):
             return
-        self._dragging   = True
-        pos              = self._clamp_to_rect(pos, dr)
-        self._drag_start = pos
-        self._drag_end   = pos
+        nx, ny = self._screen_to_norm(pos, dr)
+        self._dragging = True
+        self._sel_x1 = self._sel_x2 = nx
+        self._sel_y1 = self._sel_y2 = ny
         self.update()
         self._notify_quality()
 
@@ -109,7 +119,7 @@ class ImageCanvas(QWidget):
         dr = self._image_draw_rect()
         if not dr:
             return
-        self._drag_end = self._clamp_to_rect(QPointF(event.position()), dr)
+        self._sel_x2, self._sel_y2 = self._screen_to_norm(QPointF(event.position()), dr)
         self.update()
         self._notify_quality()
 
@@ -120,57 +130,60 @@ class ImageCanvas(QWidget):
         self.update()
         self._notify_quality()
 
+    def focusOutEvent(self, event):
+        self._dragging = False
+        super().focusOutEvent(event)
+
+    def leaveEvent(self, event):
+        if self._dragging:
+            self._dragging = False
+            self.update()
+            self._notify_quality()
+        super().leaveEvent(event)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(18, 18, 18))
 
-        if not self._pixmap or self._pixmap.isNull():
+        if not self.has_image():
             painter.setPen(QColor(200, 200, 200))
             painter.drawText(self.rect(), Qt.AlignCenter, "Select an input folder to load images.")
             return
 
         dr = self._image_draw_rect()
-        self._draw_rect = dr
+        if not dr:
+            return
         painter.drawPixmap(dr, self._pixmap, QRectF(self._pixmap.rect()))
 
-        sel = self._selection_rect()
-        if sel and sel.width() > 2 and sel.height() > 2:
-            fill = QColor(self._crop_color)
-            fill.setAlpha(60)
-            painter.fillRect(sel, fill)
-            pen = QPen(self._crop_color)
-            pen.setWidth(3)
-            painter.setPen(pen)
-            painter.drawRect(sel)
+        if self.has_selection():
+            sel = self._selection_screen_rect(dr)
+            if sel and sel.width() > 2 and sel.height() > 2:
+                fill = QColor(self._crop_color)
+                fill.setAlpha(60)
+                painter.fillRect(sel, fill)
+                pen = QPen(self._crop_color)
+                pen.setWidth(3)
+                painter.setPen(pen)
+                painter.drawRect(sel)
 
     def get_crop_box_in_original_px(self) -> Optional[Tuple[int, int, int, int]]:
-        if not self.has_image():
+        if not self.has_image() or not self.has_selection():
             return None
-        if not self._draw_rect:
-            self._draw_rect = self._image_draw_rect()
-        if not self._draw_rect:
+        ow, oh = self._img_size_px
+        x1 = min(self._sel_x1, self._sel_x2)
+        y1 = min(self._sel_y1, self._sel_y2)
+        x2 = max(self._sel_x1, self._sel_x2)
+        y2 = max(self._sel_y1, self._sel_y2)
+        if x2 - x1 < 0.001 or y2 - y1 < 0.001:
             return None
-
-        sel = self._selection_rect()
-        if not sel or sel.width() < 2 or sel.height() < 2:
-            return None
-
-        dr      = self._draw_rect
-        ow, oh  = self._img_size_px
-        left    = max(sel.left(),   dr.left())
-        top     = max(sel.top(),    dr.top())
-        right   = min(sel.right(),  dr.right())
-        bottom  = min(sel.bottom(), dr.bottom())
-
-        if right <= left or bottom <= top:
-            return None
-
-        sx = ow / dr.width()
-        sy = oh / dr.height()
-
-        cl = max(0,        min(int(round((left   - dr.left()) * sx)), ow - 1))
-        ct = max(0,        min(int(round((top    - dr.top())  * sy)), oh - 1))
-        cr = max(cl + 1,   min(int(round((right  - dr.left()) * sx)), ow))
-        cb = max(ct + 1,   min(int(round((bottom - dr.top())  * sy)), oh))
-
+        cl = max(0,      min(int(round(x1 * ow)), ow - 1))
+        ct = max(0,      min(int(round(y1 * oh)), oh - 1))
+        cr = max(cl + 1, min(int(round(x2 * ow)), ow))
+        cb = max(ct + 1, min(int(round(y2 * oh)), oh))
         return (cl, ct, cr, cb)
+
+    def set_overlay_box_normalized(self, nx1: float, ny1: float, nx2: float, ny2: float):
+        """Set selection from normalized coords — used by auto mode."""
+        self._sel_x1, self._sel_y1 = nx1, ny1
+        self._sel_x2, self._sel_y2 = nx2, ny2
+        self.update()
