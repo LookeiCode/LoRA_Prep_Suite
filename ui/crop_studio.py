@@ -261,6 +261,10 @@ class CropStudioTab(QWidget):
         left_panel.addSpacing(8)
         self.auto_section.hide()
 
+        left_widget = QWidget()
+        left_widget.setLayout(left_panel)
+        left_widget.setFixedWidth(220)
+
         center_panel = QVBoxLayout()
         center_panel.addWidget(self.canvas, stretch=1)
 
@@ -270,7 +274,7 @@ class CropStudioTab(QWidget):
         right_panel.addLayout(nav_layout)
 
         root = QHBoxLayout(self)
-        root.addLayout(left_panel,   1)
+        root.addWidget(left_widget)
         root.addLayout(center_panel, 5)
         root.addLayout(right_panel,  2)
 

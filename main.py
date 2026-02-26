@@ -24,7 +24,6 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.crop_studio_tab,    "Crop Studio")
         self.tabs.addTab(self.file_studio_tab,    "File Studio")
         self.tabs.addTab(self.signal_checker_tab, "Signal Checker")
-        self.tabs.addTab(QTabWidget(),             "Settings")
 
         self.setCentralWidget(self.tabs)
 

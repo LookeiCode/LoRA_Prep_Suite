@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 SUPPORTED_EXTS = {".png", ".jpg", ".jpeg"}
 
 TIERS = [
-    ("Ideal",   "ideal",   "#00ff00", 1.70),
+    ("Good",    "good",    "#00ff00", 1.70),
     ("Okay",    "okay",    "#ffd000", 2.50),
     ("Risky",   "risky",   "#ff8800", 3.50),
     ("Discard", "discard", "#ff3333", float("inf")),
@@ -50,17 +50,17 @@ def _compute_grade(counts: dict, total: int) -> tuple:
     if total == 0:
         return "?", "#888", "No images scanned."
 
-    ideal   = counts.get("Ideal",   0) / total
+    good    = counts.get("Good",    0) / total
     okay    = counts.get("Okay",    0) / total
     risky   = counts.get("Risky",   0) / total
     discard = counts.get("Discard", 0) / total
 
-    clean = ideal + okay
+    clean = good + okay
     risky_total = risky + discard
 
-    if ideal >= 0.75:
+    if good >= 0.75:
         return "A+", "#00ff00", "Excellent dataset. Mostly ideal images."
-    elif ideal >= 0.50 and clean >= 0.80:
+    elif good >= 0.50 and clean >= 0.80:
         return "A",  "#00ff00", "Great dataset. Strong signal across the board."
     elif clean >= 0.75 and discard < 0.05:
         return "B+", "#aaff00", "Good dataset. Mostly usable images."
@@ -114,7 +114,7 @@ class SignalCheckerTab(QWidget):
         left.addLayout(res_row)
         left.addSpacing(16)
 
-        self.cb_organize = QCheckBox("Organize images into subfolders by tier")
+        self.cb_organize = QCheckBox("Organize images into subfolders by signal strength")
         self.cb_organize.setChecked(True)
         left.addWidget(self.cb_organize)
         left.addSpacing(20)
@@ -253,6 +253,13 @@ class SignalCheckerTab(QWidget):
         self.summary_label.setText("")
         self.btn_delete_discard.setEnabled(False)
         self.btn_flatten.setEnabled(False)
+
+        # Light up buttons if tier subfolders already exist from a previous run
+        tier_folders = [f for _, f, _, _ in TIERS]
+        if any(os.path.isdir(os.path.join(directory, f)) for f in tier_folders):
+            self.btn_flatten.setEnabled(True)
+        if os.path.isdir(os.path.join(directory, "discard")):
+            self.btn_delete_discard.setEnabled(True)
 
     def _get_images(self) -> List[str]:
         if not self.folder_path:

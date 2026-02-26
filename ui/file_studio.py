@@ -273,16 +273,20 @@ class FileStudioTab(QWidget):
                 if os.path.exists(cap_src):
                     os.rename(cap_src, os.path.join(self.folder_path, f"__tmp_{i}.txt"))
 
-            temp_map[i] = (temp_path, out_ext)
+            temp_map[i] = (temp_path, out_ext, src_path)
             QApplication.processEvents()
 
         # ── Pass 2: rename temp files to final names ──
-        for i, (temp_path, out_ext) in temp_map.items():
+        for i, (temp_path, out_ext, orig_path) in temp_map.items():
             if self._stop_requested:
                 self._finish(completed=False, count=i)
                 return
 
-            final_name = f"{base_name}_{i + 1}{out_ext}"
+            # Preserve _C suffix if original was a cropped file from Crop Studio
+            orig_stem = os.path.splitext(os.path.basename(orig_path))[0]
+            crop_suffix = "_C" if orig_stem.endswith("_C") else ""
+
+            final_name = f"{base_name}_{i + 1}{crop_suffix}{out_ext}"
             final_path = os.path.join(self.folder_path, final_name)
             os.rename(temp_path, final_path)
 
@@ -290,11 +294,11 @@ class FileStudioTab(QWidget):
             if ren_caps:
                 cap_tmp = os.path.join(self.folder_path, f"__tmp_{i}.txt")
                 if os.path.exists(cap_tmp):
-                    os.rename(cap_tmp, os.path.join(self.folder_path, f"{base_name}_{i + 1}.txt"))
+                    os.rename(cap_tmp, os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt"))
 
             # Generate blank caption if requested and not already present
             if gen_caps:
-                cap_path = os.path.join(self.folder_path, f"{base_name}_{i + 1}.txt")
+                cap_path = os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt")
                 if not os.path.exists(cap_path):
                     open(cap_path, "w").close()
 
