@@ -7,7 +7,7 @@ from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFileDialog, QMessageBox, QApplication,
-    QFrame, QProgressBar, QCheckBox,
+    QFrame, QProgressBar,
 )
 
 SUPPORTED_EXTS = {".png", ".jpg", ".jpeg"}
@@ -19,6 +19,8 @@ TIERS = [
     ("Discard", "discard", "#ff3333", float("inf")),
 ]
 
+CROP_FOLDERS = {"face", "thigh", "torso", "full"}
+
 BTN_STYLE = """
     QPushButton {
         font-weight: bold; font-size: 15px;
@@ -29,6 +31,33 @@ BTN_STYLE = """
     QPushButton:hover   { background-color: #4a4a4a; }
     QPushButton:pressed { background-color: #5a5a5a; }
     QPushButton:disabled { background-color: #222; color: #555; border-color: #333; }
+"""
+
+BTN_RUN_NORMAL = BTN_STYLE
+
+BTN_RUN_CROPPED = """
+    QPushButton {
+        font-weight: bold; font-size: 15px;
+        border-radius: 6px; border: 2px solid #00cc44;
+        background-color: #1a3a22;
+        color: #00ff66;
+        min-height: 60px;
+    }
+    QPushButton:hover   { background-color: #1f4a2a; }
+    QPushButton:pressed { background-color: #256030; }
+    QPushButton:disabled { background-color: #222; color: #555; border-color: #333; }
+"""
+
+BTN_CONTINUE = """
+    QPushButton {
+        font-weight: bold; font-size: 15px;
+        border-radius: 6px; border: 2px solid #00cc44;
+        background-color: #00aa33;
+        color: white;
+        min-height: 60px;
+    }
+    QPushButton:hover   { background-color: #00bb44; }
+    QPushButton:pressed { background-color: #00cc55; }
 """
 
 
@@ -49,15 +78,12 @@ def _get_tier(upscale: float):
 def _compute_grade(counts: dict, total: int) -> tuple:
     if total == 0:
         return "?", "#888", "No images scanned."
-
     good    = counts.get("Good",    0) / total
     okay    = counts.get("Okay",    0) / total
     risky   = counts.get("Risky",   0) / total
     discard = counts.get("Discard", 0) / total
-
-    clean = good + okay
+    clean       = good + okay
     risky_total = risky + discard
-
     if good >= 0.75:
         return "A+", "#00ff00", "Excellent dataset. Mostly ideal images."
     elif good >= 0.50 and clean >= 0.80:
@@ -74,19 +100,72 @@ def _compute_grade(counts: dict, total: int) -> tuple:
         return "F",  "#ff3333", "Poor dataset. Rebuilding the image set is strongly recommended."
 
 
+def _has_crop_subfolders(path: str) -> bool:
+    return any(os.path.isdir(os.path.join(path, f)) for f in CROP_FOLDERS)
+
+
+def _has_tier_subfolders(path: str) -> bool:
+    tier_folders = [f for _, f, _, _ in TIERS]
+    return any(os.path.isdir(os.path.join(path, f)) for f in tier_folders)
+
+
+def _collect_images_from_subfolders(path: str, folders: set) -> List[str]:
+    """Collect all images from named subfolders."""
+    images = []
+    for folder_name in folders:
+        sub = os.path.join(path, folder_name)
+        if not os.path.isdir(sub):
+            continue
+        for f in os.listdir(sub):
+            if os.path.splitext(f)[1].lower() in SUPPORTED_EXTS:
+                images.append(os.path.join(sub, f))
+    return sorted(images, key=lambda p: os.path.basename(p).lower())
+
+
 class SignalCheckerTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.folder_path: Optional[str] = None
+        self.folder_path:    Optional[str]  = None
+        self._cropped_mode:  bool           = False
+        self._awaiting_continue: bool       = False  # True after phase 1 in cropped mode
+        self._last_counts:   dict           = {}
+        self._last_total:    int            = 0
         self._build_ui()
 
+    # ──────────────────────────────────────────────
+    # UI BUILD
+    # ──────────────────────────────────────────────
     def _build_ui(self):
         root = QHBoxLayout(self)
 
-        # ── Left panel — controls ──
+        # ── Left panel ──
         left = QVBoxLayout()
         left.setAlignment(Qt.AlignTop)
 
+        # Mode toggle row
+        mode_row = QHBoxLayout()
+        self._mode_dot = QLabel("●")
+        self._mode_dot.setStyleSheet("color: #444; font-size: 22px;")
+        self._mode_dot.setFixedWidth(28)
+        self._mode_btn = QPushButton("Cropped Image Mode")
+        self._mode_btn.setCheckable(False)
+        self._mode_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 13px; font-weight: bold;
+                background-color: #2e2e2e; border: 1px solid #444;
+                border-radius: 4px; padding: 6px 12px;
+            }
+            QPushButton:hover { background-color: #383838; }
+        """)
+        self._mode_btn.setFocusPolicy(Qt.ClickFocus)
+        self._mode_btn.clicked.connect(self._toggle_cropped_mode)
+        mode_row.addWidget(self._mode_dot)
+        mode_row.addWidget(self._mode_btn)
+        mode_row.addStretch(1)
+        left.addLayout(mode_row)
+        left.addSpacing(12)
+
+        # Folder picker
         self.folder_label = QLabel("Folder: (not set)")
         self.folder_label.setWordWrap(True)
         self.folder_label.setStyleSheet("color: #aaa;")
@@ -99,6 +178,7 @@ class SignalCheckerTab(QWidget):
         left.addWidget(_divider())
         left.addSpacing(16)
 
+        # Training resolution
         left.addWidget(QLabel("Training resolution:"))
         res_row = QHBoxLayout()
         self.res_combo = QComboBox()
@@ -114,16 +194,20 @@ class SignalCheckerTab(QWidget):
         left.addLayout(res_row)
         left.addSpacing(16)
 
-        self.cb_organize = QCheckBox("Organize images into subfolders by signal strength")
-        self.cb_organize.setChecked(True)
-        left.addWidget(self.cb_organize)
+        self.cb_organize = QWidget()  # placeholder — organize is always on in normal mode
+        # Real organize checkbox
+        from PySide6.QtWidgets import QCheckBox
+        self._cb_organize = QCheckBox("Organize images into subfolders by signal strength")
+        self._cb_organize.setChecked(True)
+        left.addWidget(self._cb_organize)
         left.addSpacing(20)
         left.addWidget(_divider())
         left.addSpacing(16)
 
+        # Run button
         self.btn_run = QPushButton("Run Signal Check")
-        self.btn_run.setStyleSheet(BTN_STYLE)
-        self.btn_run.clicked.connect(self.run_check)
+        self.btn_run.setStyleSheet(BTN_RUN_NORMAL)
+        self.btn_run.clicked.connect(self._on_run_clicked)
         left.addWidget(self.btn_run)
         left.addSpacing(6)
 
@@ -168,7 +252,6 @@ class SignalCheckerTab(QWidget):
         right.addWidget(results_title)
         right.addSpacing(12)
 
-        # Tier rows
         self._tier_counts = {}
         for label, folder, color, _ in TIERS:
             row = QHBoxLayout()
@@ -192,7 +275,6 @@ class SignalCheckerTab(QWidget):
         right.addWidget(_divider())
         right.addSpacing(16)
 
-        # Dataset grade
         grade_title = QLabel("Dataset Grade")
         grade_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         right.addWidget(grade_title)
@@ -223,6 +305,33 @@ class SignalCheckerTab(QWidget):
         root.addSpacing(32)
         root.addLayout(right, 1)
 
+    # ──────────────────────────────────────────────
+    # MODE TOGGLE
+    # ──────────────────────────────────────────────
+    def _toggle_cropped_mode(self):
+        self._cropped_mode = not self._cropped_mode
+        self._awaiting_continue = False
+        if self._cropped_mode:
+            self._mode_dot.setStyleSheet("color: #00ff66; font-size: 22px;")
+            self.btn_folder.setText("Select Crop Studio Output Folder")
+            self.btn_run.setText("Run Cropped Image Signal Check")
+            self.btn_run.setStyleSheet(BTN_RUN_CROPPED)
+            self._cb_organize.hide()
+        else:
+            self._mode_dot.setStyleSheet("color: #444; font-size: 22px;")
+            self.btn_folder.setText("Select Image Folder")
+            self.btn_run.setText("Run Signal Check")
+            self.btn_run.setStyleSheet(BTN_RUN_NORMAL)
+            self._cb_organize.show()
+        # Reset state on mode switch
+        self.folder_path = None
+        self.folder_label.setText("Folder: (not set)")
+        self.folder_label.setStyleSheet("color: #aaa;")
+        self._reset_results()
+
+    # ──────────────────────────────────────────────
+    # HELPERS
+    # ──────────────────────────────────────────────
     def _on_res_changed(self, text):
         self.custom_res.setVisible(text == "Custom")
 
@@ -233,33 +342,18 @@ class SignalCheckerTab(QWidget):
             return int(val) if val.isdigit() and int(val) >= 64 else None
         return int(text)
 
-    def pick_folder(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Image Folder")
-        if not directory:
-            return
-        self.folder_path = directory
-        self.folder_label.setText(f"Folder: {directory}")
-        self.folder_label.setStyleSheet("color: #e0e0e0;")
-        images = self._get_images()
-        self.progress_bar.setMaximum(max(len(images), 1))
-        self.progress_bar.setValue(0)
-        self.progress_label.setText(f"0 / {len(images)}")
-        self.status_label.setText(f"{len(images)} image(s) found.")
+    def _reset_results(self):
         for w in self._tier_counts.values():
             w.setText("—")
         self.grade_letter.setText("—")
         self.grade_letter.setStyleSheet("font-size: 52px; font-weight: bold; color: #555;")
         self.grade_desc.setText("")
         self.summary_label.setText("")
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("0 / 0")
+        self.status_label.setText("")
         self.btn_delete_discard.setEnabled(False)
         self.btn_flatten.setEnabled(False)
-
-        # Light up buttons if tier subfolders already exist from a previous run
-        tier_folders = [f for _, f, _, _ in TIERS]
-        if any(os.path.isdir(os.path.join(directory, f)) for f in tier_folders):
-            self.btn_flatten.setEnabled(True)
-        if os.path.isdir(os.path.join(directory, "discard")):
-            self.btn_delete_discard.setEnabled(True)
 
     def _get_images(self) -> List[str]:
         if not self.folder_path:
@@ -271,6 +365,65 @@ class SignalCheckerTab(QWidget):
             key=lambda p: os.path.basename(p).lower()
         )
 
+    # ──────────────────────────────────────────────
+    # FOLDER PICKER
+    # ──────────────────────────────────────────────
+    def pick_folder(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Folder")
+        if not directory:
+            return
+
+        # In cropped mode, validate that crop subfolders exist
+        if self._cropped_mode:
+            if not _has_crop_subfolders(directory):
+                QMessageBox.warning(
+                    self, "Wrong Folder",
+                    "Pick your Crop Studio output folder with the crop type subfolders "
+                    "(face, thigh, torso, full)."
+                )
+                return
+
+        self.folder_path = directory
+        self.folder_label.setText(f"Folder: {directory}")
+        self.folder_label.setStyleSheet("color: #e0e0e0;")
+        self._awaiting_continue = False
+        self.btn_run.setText("Run Cropped Image Signal Check" if self._cropped_mode else "Run Signal Check")
+        self.btn_run.setStyleSheet(BTN_RUN_CROPPED if self._cropped_mode else BTN_RUN_NORMAL)
+        self._reset_results()
+
+        if self._cropped_mode:
+            images = _collect_images_from_subfolders(directory, CROP_FOLDERS)
+            count  = len(images)
+        else:
+            images = self._get_images()
+            count  = len(images)
+
+        self.progress_bar.setMaximum(max(count, 1))
+        self.status_label.setText(f"{count} image(s) found.")
+        self.progress_label.setText(f"0 / {count}")
+
+        # Light up buttons if tier or crop subfolders already exist
+        tier_folders = [f for _, f, _, _ in TIERS]
+        all_known = set(tier_folders) | CROP_FOLDERS
+        if any(os.path.isdir(os.path.join(directory, f)) for f in all_known):
+            self.btn_flatten.setEnabled(True)
+        if os.path.isdir(os.path.join(directory, "discard")):
+            self.btn_delete_discard.setEnabled(True)
+
+    # ──────────────────────────────────────────────
+    # RUN BUTTON ROUTER
+    # ──────────────────────────────────────────────
+    def _on_run_clicked(self):
+        if self._awaiting_continue:
+            self._run_sort_phase()
+        elif self._cropped_mode:
+            self._run_cropped_phase1()
+        else:
+            self.run_check()
+
+    # ──────────────────────────────────────────────
+    # NORMAL MODE
+    # ──────────────────────────────────────────────
     def run_check(self):
         if not self.folder_path:
             QMessageBox.warning(self, "No folder", "Select a folder first.")
@@ -284,28 +437,103 @@ class SignalCheckerTab(QWidget):
             QMessageBox.warning(self, "No images", "No supported images found.")
             return
 
-        organize = self.cb_organize.isChecked()
+        organize = self._cb_organize.isChecked()
         total    = len(images)
-
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(0)
-        self.progress_label.setText(f"0 / {total}")
-        self.status_label.setText("Scanning…")
-        self.btn_run.setEnabled(False)
-        for w in self._tier_counts.values():
-            w.setText("—")
-        self.grade_letter.setText("—")
-        self.grade_letter.setStyleSheet("font-size: 52px; font-weight: bold; color: #555;")
-        self.grade_desc.setText("")
-        self.summary_label.setText("")
-        QApplication.processEvents()
+        self._scan_and_display(images, res, total, organize=organize, label="analyzed")
 
         if organize:
-            for _, folder, _, _ in TIERS:
-                os.makedirs(os.path.join(self.folder_path, folder), exist_ok=True)
+            self.btn_delete_discard.setEnabled(True)
+            self.btn_flatten.setEnabled(True)
+
+    # ──────────────────────────────────────────────
+    # CROPPED MODE — PHASE 1: flatten crop folders + grade
+    # ──────────────────────────────────────────────
+    def _run_cropped_phase1(self):
+        if not self.folder_path:
+            QMessageBox.warning(self, "No folder", "Select a folder first.")
+            return
+        if not _has_crop_subfolders(self.folder_path):
+            QMessageBox.warning(
+                self, "Wrong Folder",
+                "Pick your Crop Studio output folder with the crop type subfolders "
+                "(face, thigh, torso, full)."
+            )
+            return
+        res = self._get_resolution()
+        if not res:
+            QMessageBox.warning(self, "No resolution", "Enter a valid training resolution.")
+            return
+
+        # Collect images from crop subfolders
+        images = _collect_images_from_subfolders(self.folder_path, CROP_FOLDERS)
+        if not images:
+            QMessageBox.warning(self, "No images", "No images found in crop subfolders.")
+            return
+
+        total = len(images)
+        self.status_label.setText("Flattening crop folders and scanning…")
+        self.btn_run.setEnabled(False)
+        QApplication.processEvents()
+
+        # Flatten crop subfolders into main folder first
+        for folder_name in CROP_FOLDERS:
+            sub = os.path.join(self.folder_path, folder_name)
+            if not os.path.isdir(sub):
+                continue
+            for fname in os.listdir(sub):
+                src  = os.path.join(sub, fname)
+                dest = os.path.join(self.folder_path, fname)
+                if os.path.exists(dest):
+                    base, ext = os.path.splitext(fname)
+                    i = 1
+                    while os.path.exists(dest):
+                        dest = os.path.join(self.folder_path, f"{base}_{i}{ext}")
+                        i += 1
+                shutil.move(src, dest)
+            shutil.rmtree(sub)
+
+        # Re-collect from main folder now that everything is flat
+        images = self._get_images()
+        total  = len(images)
+
+        # Scan only — no moving yet
+        counts = self._scan_and_display(images, res, total, organize=False, label="scanned")
+        self._last_counts = counts
+        self._last_total  = total
+
+        # Transition to continue state
+        self._awaiting_continue = True
+        self.btn_run.setText("Continue — Sort into Signal Folders")
+        self.btn_run.setStyleSheet(BTN_CONTINUE)
+        self.btn_run.setEnabled(True)
+        self.status_label.setText("Review the grade above, then click Continue to sort into signal folders.")
+
+    # ──────────────────────────────────────────────
+    # CROPPED MODE — PHASE 2: sort into tier folders
+    # ──────────────────────────────────────────────
+    def _run_sort_phase(self):
+        res = self._get_resolution()
+        if not res:
+            QMessageBox.warning(self, "No resolution", "Enter a valid training resolution.")
+            return
+        images = self._get_images()
+        if not images:
+            QMessageBox.warning(self, "No images", "No images found to sort.")
+            return
+
+        total = len(images)
+        self.btn_run.setEnabled(False)
+        self.status_label.setText("Sorting into signal folders…")
+        QApplication.processEvents()
+
+        for _, folder, _, _ in TIERS:
+            os.makedirs(os.path.join(self.folder_path, folder), exist_ok=True)
 
         counts = {label: 0 for label, *_ in TIERS}
         errors = 0
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(0)
+
         for i, img_path in enumerate(images):
             try:
                 from PIL import Image
@@ -314,16 +542,72 @@ class SignalCheckerTab(QWidget):
                 upscale          = res / max(min(w, h), 1)
                 label, folder, _ = _get_tier(upscale)
                 counts[label]   += 1
+                dest = os.path.join(self.folder_path, folder, os.path.basename(img_path))
+                shutil.move(img_path, dest)
+                cap_src = os.path.splitext(img_path)[0] + ".txt"
+                if os.path.exists(cap_src):
+                    shutil.move(cap_src, os.path.join(self.folder_path, folder, os.path.basename(cap_src)))
+            except Exception as e:
+                print(f"Sort error on {img_path}: {e}")
+                errors += 1
+
+            self.progress_bar.setValue(i + 1)
+            self.progress_label.setText(f"{i + 1} / {total}")
+            QApplication.processEvents()
+
+        # Update tier counts display
+        for label, w in self._tier_counts.items():
+            n = counts.get(label, 0)
+            w.setText(f"{n} image{'s' if n != 1 else ''}")
+
+        summary = f"Training resolution: {res}px\n{total} image(s) sorted into signal folders."
+        if errors:
+            summary += f"\n{errors} file(s) could not be processed."
+        summary += f"\n\nSubfolders created in:\n{self.folder_path}"
+        self.summary_label.setText(summary)
+        self.status_label.setText("Done.")
+
+        self._awaiting_continue = False
+        self.btn_run.setText("Run Cropped Image Signal Check")
+        self.btn_run.setStyleSheet(BTN_RUN_CROPPED)
+        self.btn_run.setEnabled(True)
+        self.btn_delete_discard.setEnabled(True)
+        self.btn_flatten.setEnabled(True)
+
+    # ──────────────────────────────────────────────
+    # SHARED SCAN LOGIC
+    # ──────────────────────────────────────────────
+    def _scan_and_display(self, images: List[str], res: int, total: int,
+                          organize: bool, label: str) -> dict:
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(f"0 / {total}")
+        self._reset_results()
+        self.btn_run.setEnabled(False)
+        QApplication.processEvents()
+
+        if organize:
+            for _, folder, _, _ in TIERS:
+                os.makedirs(os.path.join(self.folder_path, folder), exist_ok=True)
+
+        counts = {lbl: 0 for lbl, *_ in TIERS}
+        errors = 0
+
+        for i, img_path in enumerate(images):
+            try:
+                from PIL import Image
+                with Image.open(img_path) as pil:
+                    w, h = pil.size
+                upscale          = res / max(min(w, h), 1)
+                lbl, folder, _   = _get_tier(upscale)
+                counts[lbl]     += 1
 
                 if organize:
                     dest = os.path.join(self.folder_path, folder, os.path.basename(img_path))
                     shutil.move(img_path, dest)
-                    # Move matching caption file if it exists
                     cap_src = os.path.splitext(img_path)[0] + ".txt"
                     if os.path.exists(cap_src):
-                        cap_dest = os.path.join(self.folder_path, folder, os.path.basename(cap_src))
-                        shutil.move(cap_src, cap_dest)
-
+                        shutil.move(cap_src, os.path.join(self.folder_path, folder, os.path.basename(cap_src)))
             except Exception as e:
                 print(f"Signal check error on {img_path}: {e}")
                 errors += 1
@@ -333,29 +617,28 @@ class SignalCheckerTab(QWidget):
             QApplication.processEvents()
 
         # Update tier counts
-        for label, w in self._tier_counts.items():
-            n = counts.get(label, 0)
+        for lbl, w in self._tier_counts.items():
+            n = counts.get(lbl, 0)
             w.setText(f"{n} image{'s' if n != 1 else ''}")
 
-        # Dataset grade
+        # Grade
         letter, color, desc = _compute_grade(counts, total)
         self.grade_letter.setText(letter)
         self.grade_letter.setStyleSheet(f"font-size: 52px; font-weight: bold; color: {color};")
         self.grade_desc.setText(desc)
 
-        # Summary
-        action = "sorted into subfolders" if organize else "analyzed (not moved)"
+        action = "sorted into subfolders" if organize else label
         summary = f"Training resolution: {res}px\n{total} image(s) {action}."
         if errors:
             summary += f"\n{errors} file(s) could not be processed."
         if organize:
             summary += f"\n\nSubfolders created in:\n{self.folder_path}"
         self.summary_label.setText(summary)
-        self.status_label.setText("Done.")
-        self.btn_run.setEnabled(True)
-        if organize:
-            self.btn_delete_discard.setEnabled(True)
-            self.btn_flatten.setEnabled(True)
+
+        if not self._awaiting_continue:
+            self.btn_run.setEnabled(True)
+
+        return counts
 
     # ──────────────────────────────────────────────
     # DELETE DISCARD
@@ -381,9 +664,10 @@ class SignalCheckerTab(QWidget):
     # FLATTEN — move all files back, remove subfolders
     # ──────────────────────────────────────────────
     def flatten_folders(self):
-        tier_folders = [f for _, f, _, _ in TIERS]
+        tier_folders  = [f for _, f, _, _ in TIERS]
+        all_folders   = list(tier_folders) + list(CROP_FOLDERS)
         moved = 0
-        for folder_name in tier_folders:
+        for folder_name in all_folders:
             sub = os.path.join(self.folder_path, folder_name)
             if not os.path.isdir(sub):
                 continue
@@ -391,7 +675,6 @@ class SignalCheckerTab(QWidget):
                 src  = os.path.join(sub, fname)
                 dest = os.path.join(self.folder_path, fname)
                 if os.path.exists(dest):
-                    # Avoid collision — append _1, _2 etc
                     base, ext = os.path.splitext(fname)
                     i = 1
                     while os.path.exists(dest):
@@ -404,3 +687,6 @@ class SignalCheckerTab(QWidget):
         self.status_label.setText(f"Flattened — {moved} file(s) moved back to main folder.")
         self.btn_delete_discard.setEnabled(False)
         self.btn_flatten.setEnabled(False)
+        self._awaiting_continue = False
+        self.btn_run.setText("Run Cropped Image Signal Check" if self._cropped_mode else "Run Signal Check")
+        self.btn_run.setStyleSheet(BTN_RUN_CROPPED if self._cropped_mode else BTN_RUN_NORMAL)

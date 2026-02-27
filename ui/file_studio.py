@@ -87,10 +87,7 @@ class FileStudioTab(QWidget):
         # Options
         self.cb_captions = QCheckBox("Generate blank caption (.txt) files")
         self.cb_captions.setChecked(True)
-        self.cb_rename_captions = QCheckBox("Rename existing caption files too")
-        self.cb_rename_captions.setChecked(True)
         left.addWidget(self.cb_captions)
-        left.addWidget(self.cb_rename_captions)
         left.addSpacing(20)
         left.addWidget(_divider())
         left.addSpacing(16)
@@ -236,7 +233,6 @@ class FileStudioTab(QWidget):
 
         fmt      = self.format_combo.currentText()
         gen_caps = self.cb_captions.isChecked()
-        ren_caps = self.cb_rename_captions.isChecked()
 
         # ── Pass 1: rename everything to temp names to avoid collisions ──
         # This handles the gap-closing case where e.g. face_5 already exists
@@ -267,11 +263,10 @@ class FileStudioTab(QWidget):
                     print(f"Convert failed for {src_path}: {e}")
                     continue
 
-            # Temp-rename matching caption file if it exists
-            if ren_caps:
-                cap_src = os.path.splitext(src_path)[0] + ".txt"
-                if os.path.exists(cap_src):
-                    os.rename(cap_src, os.path.join(self.folder_path, f"__tmp_{i}.txt"))
+            # Always temp-rename matching caption file if it exists
+            cap_src = os.path.splitext(src_path)[0] + ".txt"
+            if os.path.exists(cap_src):
+                os.rename(cap_src, os.path.join(self.folder_path, f"__tmp_{i}.txt"))
 
             temp_map[i] = (temp_path, out_ext, src_path)
             QApplication.processEvents()
@@ -291,10 +286,9 @@ class FileStudioTab(QWidget):
             os.rename(temp_path, final_path)
 
             # Rename caption temp to final
-            if ren_caps:
-                cap_tmp = os.path.join(self.folder_path, f"__tmp_{i}.txt")
-                if os.path.exists(cap_tmp):
-                    os.rename(cap_tmp, os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt"))
+            cap_tmp = os.path.join(self.folder_path, f"__tmp_{i}.txt")
+            if os.path.exists(cap_tmp):
+                os.rename(cap_tmp, os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt"))
 
             # Generate blank caption if requested and not already present
             if gen_caps:

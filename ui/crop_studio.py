@@ -63,9 +63,12 @@ class CropStudioTab(QWidget):
 
         self.pose = PoseDetector()
         self.canvas = ImageCanvas()
-        # Wire canvas quality updates directly to this tab — avoids the
-        # window() lookup which would return MainWindow, not CropStudioTab
         self.canvas._quality_callback = self.update_crop_quality
+
+        # Per-image completed state memory: {image_path: set of crop_type.key}
+        self._completed_map: dict = {}
+        # Track which images auto-advance has already fired for
+        self._advanced_for: set = set()
 
         self._build_ui()
         self._build_auto_state()
@@ -188,7 +191,7 @@ class CropStudioTab(QWidget):
         self.auto_eta_label.setStyleSheet("font-size: 15px;")
 
         self.auto_timer = QTimer(self)
-        self.auto_timer.setInterval(1000)
+        self.auto_timer.setInterval(250)
         self.auto_timer.timeout.connect(self._tick_eta_countdown)
 
         # ── Nav buttons ──
@@ -345,9 +348,10 @@ class CropStudioTab(QWidget):
     def _tick_eta_countdown(self):
         if not self.auto_running:
             return
-        self.auto_remaining_secs = max(0.0, self.auto_remaining_secs - 1.0)
-        mins = int(self.auto_remaining_secs) // 60
-        secs = int(self.auto_remaining_secs) % 60
+        elapsed  = time.perf_counter() - self._eta_start_time
+        remaining = max(0.0, self._eta_total_secs - elapsed)
+        mins = int(remaining) // 60
+        secs = int(remaining) % 60
         self.auto_eta_label.setText(f"ETA: {mins:02d}:{secs:02d}")
 
     # ──────────────────────────────────────────────
@@ -418,10 +422,10 @@ class CropStudioTab(QWidget):
         total_detect_time = time.perf_counter() - t0
 
         anim_and_save_overhead = 1.5  # seconds per image
-        # TODO: Timer improvement — use per-image detection times from silent pass
-        # for a dataset-specific estimate instead of fixed overhead.
-        avg_per_image            = (total_detect_time / max(valid_count, 1)) + anim_and_save_overhead
-        self.auto_remaining_secs = avg_per_image * total
+        avg_per_image              = (total_detect_time / max(valid_count, 1)) + anim_and_save_overhead
+        self.auto_remaining_secs   = avg_per_image * total
+        self._eta_total_secs       = self.auto_remaining_secs
+        self._eta_start_time       = time.perf_counter()
 
         mins = int(self.auto_remaining_secs) // 60
         secs = int(self.auto_remaining_secs) % 60
@@ -544,6 +548,8 @@ class CropStudioTab(QWidget):
         )
         self.images = files
         self.index  = 0
+        self._completed_map = {}
+        self._advanced_for  = set()
         if not self.images:
             self.current_image_path = None
             self.canvas.set_image(QPixmap(), (1, 1))
@@ -575,8 +581,10 @@ class CropStudioTab(QWidget):
         self.status_label.setText(
             f"Image {self.index + 1}/{len(self.images)} — {os.path.basename(path)} ({ow}×{oh})"
         )
+        # Restore per-image completed state from memory
+        completed_keys = self._completed_map.get(path, set())
         for b in self.tile_buttons:
-            b.mark_completed(False)
+            b.mark_completed(b.crop_type.key in completed_keys)
         self.update_crop_quality()
 
     # ──────────────────────────────────────────────
@@ -660,16 +668,25 @@ class CropStudioTab(QWidget):
                 if b.crop_type == self.current_crop_type:
                     b.mark_completed(True)
 
+            # Persist completed state for this image
+            path = self.current_image_path
+            if path not in self._completed_map:
+                self._completed_map[path] = set()
+            self._completed_map[path].add(self.current_crop_type.key)
+
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
             return
 
         self.canvas.clear_selection()
 
-        # Auto-advance only when every crop tile is marked done
+        # Auto-advance only when every crop tile is marked done,
+        # and only once per image — never re-fires if you go back
         if self.auto_advance.isChecked():
             all_done = all(b.completed for b in self.tile_buttons)
-            if all_done:
+            path     = self.current_image_path
+            if all_done and path not in self._advanced_for:
+                self._advanced_for.add(path)
                 self.next_image()
 
     # ──────────────────────────────────────────────
