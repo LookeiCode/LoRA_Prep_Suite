@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 from core.config import CROP_TYPES, DEFAULT_TRAINING_RESOLUTION, SUPPORTED_EXTS
 from core.pose_detection import PoseDetector
 from ui.canvas import ImageCanvas
+from ui.advanced_crop_settings import AdvancedCropSettingsDialog
 
 
 class CropTile(QPushButton):
@@ -23,7 +24,7 @@ class CropTile(QPushButton):
         self.crop_type = crop_type
         self.completed = False
         self.setCheckable(True)
-        self.setMinimumHeight(60)
+        self.setMinimumHeight(36)
         self.update_style()
 
     def update_style(self):
@@ -59,7 +60,11 @@ class CropStudioTab(QWidget):
         self.images:     List[str]     = []
         self.index:      int           = 0
         self.current_image_path: Optional[str] = None
-        self.current_crop_type = CROP_TYPES[0]
+
+        # Instance-level crop types — can be customised at runtime
+        import copy
+        self.active_crop_types = copy.deepcopy(CROP_TYPES)
+        self.current_crop_type = self.active_crop_types[0]
 
         self.pose = PoseDetector()
         self.canvas = ImageCanvas()
@@ -99,18 +104,9 @@ class CropStudioTab(QWidget):
         self.status_label = QLabel("No images loaded.")
         self.status_label.setStyleSheet("color: #EAEAEA;")
 
-        # ── Crop tiles ──
+        # ── Tile buttons built in _build_left_widget ──
         self.tile_buttons: List[CropTile] = []
         self.tile_group = QButtonGroup(self)
-        self.tile_group.setExclusive(True)
-        for i, ct in enumerate(CROP_TYPES):
-            tile = CropTile(ct, self)
-            if i == 0:
-                tile.setChecked(True)
-                self.canvas.set_crop_color(ct.color)
-            tile.clicked.connect(self.handle_tile_click)
-            self.tile_group.addButton(tile, i)
-            self.tile_buttons.append(tile)
 
         # ── Signal strength ──
         self.signal_title = QLabel("Framing Signal Strength")
@@ -216,23 +212,44 @@ class CropStudioTab(QWidget):
         nav_layout.addWidget(self.auto_advance)
         nav_layout.addWidget(self.use_subfolders)
         nav_layout.addStretch(1)
-        folder_container = QWidget()
-        folder_layout = QVBoxLayout(folder_container)
-        folder_layout.setContentsMargins(8, 0, 8, 0)
-        folder_layout.addWidget(self.btn_input)
-        folder_layout.addWidget(self.input_label)
-        folder_layout.addSpacing(6)
-        folder_layout.addWidget(self.btn_output)
-        folder_layout.addWidget(self.output_label)
-        nav_layout.addWidget(folder_container)
-        nav_layout.addSpacing(8)
 
-        # ── Left panel ──
+
+        # ── Left panel — permanent, never rebuilt ──
+        # Tile container has a FIXED height forever. Buttons resize to fill it.
+        MAX_TILES = 8
+        self._all_tiles: List[CropTile] = []
+        self._tile_layout = QVBoxLayout()
+        self._tile_layout.setContentsMargins(0, 0, 6, 0)
+        self._tile_layout.setSpacing(4)
+
+        from core.config import CropType as CT
+        from PySide6.QtGui import QColor as QC
+        placeholder = CT("__placeholder__", "", "", QC(0,0,0), True)
+        padded = list(self.active_crop_types) + [placeholder] * (MAX_TILES - len(self.active_crop_types))
+
+        for i, ct in enumerate(padded):
+            tile = CropTile(ct)
+            tile.setFixedHeight(60)
+            if i < len(self.active_crop_types):
+                if i == 0:
+                    tile.setChecked(True)
+                    self.canvas.set_crop_color(ct.color)
+                tile.clicked.connect(self.handle_tile_click)
+                self.tile_group.addButton(tile, i)
+                self.tile_buttons.append(tile)
+            else:
+                tile.hide()
+            self._tile_layout.addWidget(tile)
+            self._all_tiles.append(tile)
+
+        self.tile_container = QWidget()
+        self.tile_container.setLayout(self._tile_layout)
+        self.tile_container.setFixedHeight(280)
+
         self.manual_section = QWidget()
         ml = QVBoxLayout(self.manual_section)
         ml.setContentsMargins(0, 0, 0, 0)
-        for tile in self.tile_buttons:
-            ml.addWidget(tile)
+        ml.addWidget(self.tile_container)
         ml.addSpacing(14)
         ml.addWidget(self.signal_title)
         ml.addWidget(self.quality_indicator, alignment=Qt.AlignCenter)
@@ -254,6 +271,7 @@ class CropStudioTab(QWidget):
         al.addSpacing(6)
         al.addWidget(self.auto_eta_label)
         al.addStretch(1)
+        self.auto_section.hide()
 
         left_panel = QVBoxLayout()
         left_panel.addWidget(self.manual_section)
@@ -262,11 +280,10 @@ class CropStudioTab(QWidget):
         left_panel.addWidget(self.manual_mode_cb)
         left_panel.addWidget(self.auto_mode_cb)
         left_panel.addSpacing(8)
-        self.auto_section.hide()
 
-        left_widget = QWidget()
-        left_widget.setLayout(left_panel)
-        left_widget.setFixedWidth(220)
+        self.left_widget = QWidget()
+        self.left_widget.setLayout(left_panel)
+        self.left_widget.setFixedWidth(220)
 
         center_panel = QVBoxLayout()
         center_panel.addWidget(self.canvas, stretch=1)
@@ -275,11 +292,77 @@ class CropStudioTab(QWidget):
         right_panel.addWidget(self.status_label)
         right_panel.addSpacing(8)
         right_panel.addLayout(nav_layout)
+        right_panel.addStretch(1)
 
-        root = QHBoxLayout(self)
-        root.addWidget(left_widget)
-        root.addLayout(center_panel, 5)
-        root.addLayout(right_panel,  2)
+        folder_container = QWidget()
+        folder_layout = QVBoxLayout(folder_container)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.addWidget(self.btn_input)
+        folder_layout.addWidget(self.input_label)
+        folder_layout.addSpacing(6)
+        folder_layout.addWidget(self.btn_output)
+        folder_layout.addWidget(self.output_label)
+        right_panel.addWidget(folder_container)
+        right_panel.addSpacing(8)
+
+        self.btn_adv_settings = QPushButton("Advanced Crop Settings")
+        self.btn_adv_settings.setStyleSheet("""
+            QPushButton {
+                font-size: 13px; font-weight: bold;
+                background-color: #2e2e2e; border: 1px solid #555;
+                border-radius: 4px; padding: 8px;
+            }
+            QPushButton:hover { background-color: #3a3a3a; }
+        """)
+        self.btn_adv_settings.clicked.connect(self.open_advanced_settings)
+        right_panel.addWidget(self.btn_adv_settings)
+
+        self.root_layout = QHBoxLayout(self)
+        self.root_layout.addWidget(self.left_widget)
+        self.root_layout.addLayout(center_panel, 5)
+        self.root_layout.addLayout(right_panel,  2)
+
+    def _rebuild_tiles(self):
+        """Update tile buttons in-place. Container is fixed height — tiles resize to fill it."""
+        for tile in self.tile_buttons:
+            self.tile_group.removeButton(tile)
+        self.tile_group = QButtonGroup(self)
+        self.tile_group.setExclusive(True)
+        self.tile_buttons = []
+
+        tile_count = len(self.active_crop_types)
+        CONTAINER_H = 280
+        SPACING = 4
+        tile_height = (CONTAINER_H - SPACING * (tile_count - 1)) // tile_count
+        self.tile_container.setFixedHeight(CONTAINER_H)
+
+        for i, tile in enumerate(self._all_tiles):
+            if i < tile_count:
+                ct = self.active_crop_types[i]
+                tile.crop_type = ct
+                tile.completed = False
+                tile.setText(ct.label)
+                tile.setMinimumHeight(tile_height)
+                tile.setMaximumHeight(tile_height)
+                tile.setChecked(i == 0)
+                tile.update_style()
+                tile.show()
+                try:
+                    tile.clicked.disconnect()
+                except RuntimeError:
+                    pass
+                tile.clicked.connect(self.handle_tile_click)
+                self.tile_group.addButton(tile, i)
+                self.tile_buttons.append(tile)
+                if i == 0:
+                    self.canvas.set_crop_color(ct.color)
+            else:
+                tile.hide()
+
+        self.current_crop_type = self.active_crop_types[0]
+        self._completed_map.clear()
+        self._advanced_for.clear()
+        self.apply_mode_ui()
 
     def _build_auto_state(self):
         self.auto_current_index    = 0
@@ -306,7 +389,35 @@ class CropStudioTab(QWidget):
                 self.manual_mode_cb.setChecked(False)
         if not self.manual_mode_cb.isChecked() and not self.auto_mode_cb.isChecked():
             self.manual_mode_cb.setChecked(True)
+
+        # Warn once if switching to auto with custom crop types present
+        if self.auto_mode_cb.isChecked() and self.sender() == self.auto_mode_cb:
+            has_custom = any(not ct.is_default for ct in self.active_crop_types)
+            if has_custom:
+                QMessageBox.information(
+                    self, "Auto Mode — Default Crops Only",
+                    "Auto mode only runs on the four default crop types "
+                    "(Face, Torso Up, Thigh Up, Full Body).\n\n"
+                    "Your custom crop buttons won't be included in the "
+                    "automatic cropping sequence, but their colors will "
+                    "still appear when saving manually."
+                )
+
         self.apply_mode_ui()
+
+    # ──────────────────────────────────────────────
+    # ADVANCED CROP SETTINGS
+    # ──────────────────────────────────────────────
+    def open_advanced_settings(self):
+        dlg = AdvancedCropSettingsDialog(self.active_crop_types, parent=self)
+        result = dlg.exec()
+        QApplication.processEvents()
+        self.window().activateWindow()
+        self.window().raise_()
+        if result and dlg.result_types:
+            self.active_crop_types = dlg.result_types
+            self.current_crop_type = self.active_crop_types[0]
+            self._rebuild_tiles()
 
     def apply_mode_ui(self):
         if self.manual_mode_cb.isChecked():
@@ -694,7 +805,7 @@ class CropStudioTab(QWidget):
     # ──────────────────────────────────────────────
     def handle_tile_click(self):
         idx = self.tile_group.id(self.sender())
-        self.current_crop_type = CROP_TYPES[idx]
+        self.current_crop_type = self.active_crop_types[idx]
         self.canvas.set_crop_color(self.current_crop_type.color)
         for b in self.tile_buttons:
             b.blockSignals(True)
@@ -760,7 +871,7 @@ class CropStudioTab(QWidget):
     def select_crop_type(self, idx: int):
         if 0 <= idx < len(self.tile_buttons):
             self.tile_buttons[idx].setChecked(True)
-            self.current_crop_type = CROP_TYPES[idx]
+            self.current_crop_type = self.active_crop_types[idx]
             self.canvas.set_crop_color(self.current_crop_type.color)
             for b in self.tile_buttons:
                 b.update_style()

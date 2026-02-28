@@ -177,13 +177,12 @@ class InjectorTab(QWidget):
             "    (e.g. after flattening from Signal Studio).\n\n"
             "2. Select the output folder — your main dataset folder\n"
             "    with subfolders like 10_face, 15_torso, etc.\n\n"
-            "3. Toggle which default keywords to inject, and add\n"
-            "    custom keywords using the + buttons.\n\n"
+            "3. face, torso, thigh, and fullbody are matched by default.\n"
+            "    Add custom keywords using the + buttons if needed.\n\n"
             "4. Hit Inject — files are matched by keyword in their\n"
             "    filename to the matching subfolder in the output.\n\n"
             "5. Any file with no matching subfolder is moved into\n"
-            "    an 'unmatched' folder in the source for review.\n\n"
-            "Caption .txt files are always moved with their image."
+            "    an 'unmatched' folder in the source for review."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #aaa; font-size: 13px;")
@@ -211,6 +210,7 @@ class InjectorTab(QWidget):
         btn.setText("−")
         btn.clicked.disconnect()
         btn.clicked.connect(lambda: self._collapse_custom(field, btn))
+        field.setFocus()
 
     def _collapse_custom(self, field: QLineEdit, btn: QPushButton):
         field.hide()
@@ -302,18 +302,6 @@ class InjectorTab(QWidget):
                                 j += 1
                         shutil.move(src, dest)
                         matched_counts[matched_kw] += 1
-
-                        # Move caption file if present
-                        cap = os.path.join(self.source_path, os.path.splitext(fname)[0] + ".txt")
-                        if os.path.exists(cap):
-                            cap_dest = os.path.join(target_folder, os.path.basename(cap))
-                            if os.path.exists(cap_dest):
-                                base, _ = os.path.splitext(os.path.basename(cap))
-                                ci = 1
-                                while os.path.exists(cap_dest):
-                                    cap_dest = os.path.join(target_folder, f"{base}_{ci}.txt")
-                                    ci += 1
-                            shutil.move(cap, cap_dest)
                     except Exception as e:
                         print(f"Inject error on {fname}: {e}")
                         errors += 1
@@ -334,10 +322,6 @@ class InjectorTab(QWidget):
                 src = os.path.join(self.source_path, fname)
                 if os.path.exists(src):
                     shutil.move(src, os.path.join(unmatched_dir, fname))
-                    # Move caption too
-                    cap = os.path.join(self.source_path, os.path.splitext(fname)[0] + ".txt")
-                    if os.path.exists(cap):
-                        shutil.move(cap, os.path.join(unmatched_dir, os.path.basename(cap)))
 
         # Build results summary
         total_moved = sum(matched_counts.values())

@@ -1,16 +1,17 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from PySide6.QtGui import QColor
 
 SUPPORTED_EXTS = {".png", ".jpg", ".jpeg"}
 DEFAULT_TRAINING_RESOLUTION = 512
 
 
-@dataclass(frozen=True)
+@dataclass
 class CropType:
     key: str
     label: str
     suffix: str
     color: QColor
+    is_default: bool = True  # False for user-added custom types
 
 
 CROP_TYPES = [
