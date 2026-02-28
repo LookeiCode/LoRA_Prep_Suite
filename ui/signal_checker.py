@@ -33,7 +33,17 @@ BTN_STYLE = """
     QPushButton:disabled { background-color: #222; color: #555; border-color: #333; }
 """
 
-BTN_RUN_NORMAL = BTN_STYLE
+BTN_RUN_NORMAL = """
+    QPushButton {
+        font-weight: bold; font-size: 15px;
+        border-radius: 6px; border: 2px solid #555;
+        background-color: #3a3a3a;
+        min-height: 60px;
+    }
+    QPushButton:hover   { background-color: #4a4a4a; }
+    QPushButton:pressed { background-color: #5a5a5a; }
+    QPushButton:disabled { background-color: #222; color: #555; border-color: #333; }
+"""
 
 BTN_RUN_CROPPED = """
     QPushButton {
@@ -142,7 +152,7 @@ class SignalCheckerTab(QWidget):
         left = QVBoxLayout()
         left.setAlignment(Qt.AlignTop)
 
-        # Mode toggle row
+        # Mode toggle row — dot + button + organize checkbox on same line
         mode_row = QHBoxLayout()
         self._mode_dot = QLabel("●")
         self._mode_dot.setStyleSheet("color: #444; font-size: 22px;")
@@ -159,8 +169,13 @@ class SignalCheckerTab(QWidget):
         """)
         self._mode_btn.setFocusPolicy(Qt.ClickFocus)
         self._mode_btn.clicked.connect(self._toggle_cropped_mode)
+        from PySide6.QtWidgets import QCheckBox
+        self._cb_organize = QCheckBox("Organize by signal strength")
+        self._cb_organize.setChecked(True)
         mode_row.addWidget(self._mode_dot)
         mode_row.addWidget(self._mode_btn)
+        mode_row.addSpacing(16)
+        mode_row.addWidget(self._cb_organize)
         mode_row.addStretch(1)
         left.addLayout(mode_row)
         left.addSpacing(12)
@@ -174,9 +189,9 @@ class SignalCheckerTab(QWidget):
         self.btn_folder.clicked.connect(self.pick_folder)
         left.addWidget(self.btn_folder)
         left.addWidget(self.folder_label)
-        left.addSpacing(16)
+        left.addSpacing(12)
         left.addWidget(_divider())
-        left.addSpacing(16)
+        left.addSpacing(12)
 
         # Training resolution
         left.addWidget(QLabel("Training resolution:"))
@@ -192,37 +207,34 @@ class SignalCheckerTab(QWidget):
         res_row.addWidget(self.res_combo)
         res_row.addWidget(self.custom_res)
         left.addLayout(res_row)
-        left.addSpacing(16)
-
-        self.cb_organize = QWidget()  # placeholder — organize is always on in normal mode
-        # Real organize checkbox
-        from PySide6.QtWidgets import QCheckBox
-        self._cb_organize = QCheckBox("Organize images into subfolders by signal strength")
-        self._cb_organize.setChecked(True)
-        left.addWidget(self._cb_organize)
-        left.addSpacing(20)
+        left.addSpacing(12)
         left.addWidget(_divider())
-        left.addSpacing(16)
+        left.addSpacing(12)
 
-        # Run button
+        # Buttons container
+        btn_container = QWidget()
+        btn_layout = QVBoxLayout(btn_container)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(6)
+
         self.btn_run = QPushButton("Run Signal Check")
         self.btn_run.setStyleSheet(BTN_RUN_NORMAL)
         self.btn_run.clicked.connect(self._on_run_clicked)
-        left.addWidget(self.btn_run)
-        left.addSpacing(6)
+        btn_layout.addWidget(self.btn_run)
 
         self.btn_delete_discard = QPushButton("Delete Discard Folder")
         self.btn_delete_discard.setStyleSheet(BTN_STYLE)
         self.btn_delete_discard.setEnabled(False)
         self.btn_delete_discard.clicked.connect(self.delete_discard)
-        left.addWidget(self.btn_delete_discard)
-        left.addSpacing(6)
+        btn_layout.addWidget(self.btn_delete_discard)
 
         self.btn_flatten = QPushButton("Flatten — Move All Back & Remove Subfolders")
         self.btn_flatten.setStyleSheet(BTN_STYLE)
         self.btn_flatten.setEnabled(False)
         self.btn_flatten.clicked.connect(self.flatten_folders)
-        left.addWidget(self.btn_flatten)
+        btn_layout.addWidget(self.btn_flatten)
+
+        left.addWidget(btn_container)
         left.addSpacing(12)
 
         self.progress_label = QLabel("0 / 0")
@@ -316,14 +328,19 @@ class SignalCheckerTab(QWidget):
             self.btn_folder.setText("Select Crop Studio Output Folder")
             self.btn_run.setText("Run Cropped Image Signal Check")
             self.btn_run.setStyleSheet(BTN_RUN_CROPPED)
-            self._cb_organize.hide()
+            self._cb_organize.setEnabled(False)
+            self._cb_organize.setStyleSheet("""
+                QCheckBox { color: #aaa; }
+                QCheckBox::indicator { border: 1px solid #444; background-color: #1a1a1a; }
+                QCheckBox::indicator:checked { background-color: #444; border: 1px solid #555; }
+            """)
         else:
             self._mode_dot.setStyleSheet("color: #444; font-size: 22px;")
             self.btn_folder.setText("Select Image Folder")
             self.btn_run.setText("Run Signal Check")
             self.btn_run.setStyleSheet(BTN_RUN_NORMAL)
-            self._cb_organize.show()
-        # Reset state on mode switch
+            self._cb_organize.setEnabled(True)
+            self._cb_organize.setStyleSheet("")
         self.folder_path = None
         self.folder_label.setText("Folder: (not set)")
         self.folder_label.setStyleSheet("color: #aaa;")

@@ -5,9 +5,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
-from ui.crop_studio   import CropStudioTab
-from ui.file_studio   import FileStudioTab
+from ui.crop_studio    import CropStudioTab
+from ui.file_studio    import FileStudioTab
 from ui.signal_checker import SignalCheckerTab
+from ui.injector       import InjectorTab
 
 
 class MainWindow(QMainWindow):
@@ -20,10 +21,12 @@ class MainWindow(QMainWindow):
         self.crop_studio_tab    = CropStudioTab()
         self.file_studio_tab    = FileStudioTab()
         self.signal_checker_tab = SignalCheckerTab()
+        self.injector_tab       = InjectorTab()
 
         self.tabs.addTab(self.crop_studio_tab,    "Crop Studio")
         self.tabs.addTab(self.signal_checker_tab, "Signal Studio")
         self.tabs.addTab(self.file_studio_tab,    "File Studio")
+        self.tabs.addTab(self.injector_tab,       "Injector")
 
         self.setCentralWidget(self.tabs)
 
