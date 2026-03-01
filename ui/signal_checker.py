@@ -228,7 +228,7 @@ class SignalCheckerTab(QWidget):
         self.btn_delete_discard.clicked.connect(self.delete_discard)
         btn_layout.addWidget(self.btn_delete_discard)
 
-        self.btn_flatten = QPushButton("Flatten — Move All Back & Remove Subfolders")
+        self.btn_flatten = QPushButton("Flatten Folder")
         self.btn_flatten.setStyleSheet(BTN_STYLE)
         self.btn_flatten.setEnabled(False)
         self.btn_flatten.clicked.connect(self.flatten_folders)
@@ -407,6 +407,14 @@ class SignalCheckerTab(QWidget):
         self.btn_run.setText("Run Cropped Image Signal Check" if self._cropped_mode else "Run Signal Check")
         self.btn_run.setStyleSheet(BTN_RUN_CROPPED if self._cropped_mode else BTN_RUN_NORMAL)
         self._reset_results()
+
+        # Enable flatten right away if any subfolders exist
+        has_subs = any(
+            os.path.isdir(os.path.join(directory, f))
+            for f in os.listdir(directory)
+        )
+        if has_subs:
+            self.btn_flatten.setEnabled(True)
 
         if self._cropped_mode:
             images = _collect_images_from_subfolders(directory, CROP_FOLDERS)
@@ -681,13 +689,14 @@ class SignalCheckerTab(QWidget):
     # FLATTEN — move all files back, remove subfolders
     # ──────────────────────────────────────────────
     def flatten_folders(self):
-        tier_folders  = [f for _, f, _, _ in TIERS]
-        all_folders   = list(tier_folders) + list(CROP_FOLDERS)
+        # Flatten ALL subfolders, not just known ones
+        all_subs = [
+            f for f in os.listdir(self.folder_path)
+            if os.path.isdir(os.path.join(self.folder_path, f))
+        ]
         moved = 0
-        for folder_name in all_folders:
+        for folder_name in all_subs:
             sub = os.path.join(self.folder_path, folder_name)
-            if not os.path.isdir(sub):
-                continue
             for fname in os.listdir(sub):
                 src  = os.path.join(sub, fname)
                 dest = os.path.join(self.folder_path, fname)

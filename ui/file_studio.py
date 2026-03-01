@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QComboBox, QCheckBox, QProgressBar, QFileDialog,
-    QMessageBox, QApplication, QFrame,
+    QMessageBox, QApplication, QFrame, QTextEdit,
 )
 
 
@@ -123,36 +123,38 @@ class FileStudioTab(QWidget):
         left.addWidget(self.status_label)
         left.addStretch(1)
 
-        # ── Right panel — info ──
+        left_widget = QWidget()
+        left_widget.setFixedWidth(810)
+        left_widget.setLayout(left)
+
+        root.addWidget(left_widget)
+        root.addSpacing(16)
+
+        # ── Right panel — terminal log ──
         right = QVBoxLayout()
-        right.setAlignment(Qt.AlignTop)
-        right.addSpacing(16)
+        right.setContentsMargins(0, 0, 0, 0)
 
-        info_title = QLabel("How it works")
-        info_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        right.addWidget(info_title)
-        right.addSpacing(8)
+        term_label = QLabel("FILE LOG")
+        term_label.setStyleSheet("font-family: Consolas, monospace; font-size: 11px; color: #00ff66; font-weight: bold; padding: 6px 8px 2px 8px;")
+        right.addWidget(term_label)
 
-        info = QLabel(
-            "1. Select a folder containing images.\n\n"
-            "2. Enter a base name — all images will be renamed\n"
-            "    to  basename_1, basename_2, etc.\n\n"
-            "3. Choose an output format, or keep originals.\n\n"
-            "4. Optionally generate blank .txt caption files\n"
-            "    alongside each renamed image.\n\n"
-            "5. Re-run on a folder to close gaps after deletions.\n"
-            "    Enable 'Rename existing captions' to keep them\n"
-            "    paired with their images.\n\n"
-            "Files are renamed in place — nothing is deleted."
-        )
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #aaa; font-size: 13px;")
-        right.addWidget(info)
-        right.addStretch(1)
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setStyleSheet("""
+            QTextEdit {
+                background-color: #0a0a0a;
+                color: #00ff66;
+                font-family: Consolas, Courier New, monospace;
+                font-size: 12px;
+                border: 1px solid #1a1a1a;
+                padding: 8px;
+            }
+        """)
+        self.terminal.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.terminal.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right.addWidget(self.terminal, 1)
 
-        root.addLayout(left,  2)
-        root.addSpacing(32)
-        root.addLayout(right, 1)
+        root.addLayout(right, 2)
 
     # ──────────────────────────────────────────────
     # FOLDER PICKER
@@ -180,6 +182,10 @@ class FileStudioTab(QWidget):
         ]
         return sorted(files, key=lambda p: os.path.basename(p).lower())
 
+    def _log(self, text: str, color: str = "#00ff66"):
+        self.terminal.append(f'<span style="color:{color}; font-family:Consolas,monospace;">{text}</span>')
+        self.terminal.verticalScrollBar().setValue(self.terminal.verticalScrollBar().maximum())
+
     # ──────────────────────────────────────────────
     # STOP
     # ──────────────────────────────────────────────
@@ -197,8 +203,12 @@ class FileStudioTab(QWidget):
         self.btn_stop.setStyleSheet(BTN_STYLE)
         if completed:
             self.status_label.setText(f"Done — {count} file(s) renamed.")
+            self._log("─" * 48, "#222222")
+            self._log(f"&gt; Done — {count} file(s) renamed.", "#00aaff")
         else:
             self.status_label.setText(f"Stopped — {count} file(s) renamed before stopping.")
+            self._log("─" * 48, "#222222")
+            self._log(f"&gt; Stopped — {count} file(s) renamed.", "#ff8800")
             self.progress_bar.setValue(0)
             self.progress_label.setText("0 / 0")
 
@@ -229,6 +239,9 @@ class FileStudioTab(QWidget):
         self.progress_bar.setValue(0)
         self.progress_label.setText(f"0 / {total}")
         self.status_label.setText("Renaming…")
+        self.terminal.clear()
+        self._log(f"&gt; Starting — {total} image(s)  base: {base_name}", "#00aaff")
+        self._log("─" * 48, "#222222")
         QApplication.processEvents()
 
         fmt      = self.format_combo.currentText()
@@ -284,17 +297,21 @@ class FileStudioTab(QWidget):
             final_name = f"{base_name}_{i + 1}{crop_suffix}{out_ext}"
             final_path = os.path.join(self.folder_path, final_name)
             os.rename(temp_path, final_path)
+            self._log(f"  ✎ {os.path.basename(orig_path)}  →  {final_name}", "#00ff66")
 
             # Rename caption temp to final
             cap_tmp = os.path.join(self.folder_path, f"__tmp_{i}.txt")
+            cap_final = f"{base_name}_{i + 1}{crop_suffix}.txt"
             if os.path.exists(cap_tmp):
-                os.rename(cap_tmp, os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt"))
+                os.rename(cap_tmp, os.path.join(self.folder_path, cap_final))
+                self._log(f"  ✎ caption renamed  →  {cap_final}", "#ffaa00")
 
             # Generate blank caption if requested and not already present
             if gen_caps:
                 cap_path = os.path.join(self.folder_path, f"{base_name}_{i + 1}{crop_suffix}.txt")
                 if not os.path.exists(cap_path):
                     open(cap_path, "w").close()
+                    self._log(f"  + caption created  →  {cap_final}", "#ffaa00")
 
             self.progress_bar.setValue(i + 1)
             self.progress_label.setText(f"{i + 1} / {len(temp_map)}")

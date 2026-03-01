@@ -198,45 +198,38 @@ class InjectorTab(QWidget):
         left.addWidget(self.status_label)
         left.addStretch(1)
 
-        # ── Right panel — info + results ──
+        # ── Right panel — terminal log ──
+        from PySide6.QtWidgets import QTextEdit
         right = QVBoxLayout()
-        right.setAlignment(Qt.AlignTop)
-        right.addSpacing(16)
+        right.setContentsMargins(0, 0, 0, 0)
 
-        info_title = QLabel("How it works")
-        info_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        right.addWidget(info_title)
-        right.addSpacing(8)
+        term_label = QLabel("INJECT LOG")
+        term_label.setStyleSheet("font-family: Consolas, monospace; font-size: 11px; color: #00ff66; font-weight: bold; padding: 6px 8px 2px 8px;")
+        right.addWidget(term_label)
 
-        info = QLabel(
-            "1. Select a source folder containing mixed cropped images\n"
-            "    (e.g. after flattening from Signal Studio).\n\n"
-            "2. Select the output folder — your main dataset folder\n"
-            "    with subfolders like 10_face, 15_torso, etc.\n\n"
-            "3. face, torso, thigh, and fullbody are matched by default.\n"
-            "    Add custom keywords using the + buttons if needed.\n\n"
-            "4. Hit Inject — files are matched by keyword in their\n"
-            "    filename to the matching subfolder in the output.\n\n"
-            "5. Any file with no matching subfolder is moved into\n"
-            "    an 'unmatched' folder in the source for review."
-        )
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #aaa; font-size: 13px;")
-        right.addWidget(info)
-        right.addSpacing(16)
-        right.addWidget(_divider())
-        right.addSpacing(16)
-
-        # Results
-        self.results_label = QLabel("")
-        self.results_label.setWordWrap(True)
-        self.results_label.setStyleSheet("font-size: 13px; color: #ccc;")
-        right.addWidget(self.results_label)
-        right.addStretch(1)
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setStyleSheet("""
+            QTextEdit {
+                background-color: #0a0a0a;
+                color: #00ff66;
+                font-family: Consolas, Courier New, monospace;
+                font-size: 12px;
+                border: 1px solid #1a1a1a;
+                padding: 8px;
+            }
+        """)
+        self.terminal.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.terminal.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right.addWidget(self.terminal, 1)
 
         root.addLayout(left,  2)
-        root.addSpacing(32)
-        root.addLayout(right, 1)
+        root.addSpacing(16)
+        root.addLayout(right, 2)
+
+    def _log(self, text: str, color: str = "#00ff66"):
+        self.terminal.append(f'<span style="color:{color}; font-family:Consolas,monospace;">{text}</span>')
+        self.terminal.verticalScrollBar().setValue(self.terminal.verticalScrollBar().maximum())
 
     def set_crop_studio(self, crop_studio_tab):
         """Called by main window to give injector access to crop studio."""
@@ -340,7 +333,11 @@ class InjectorTab(QWidget):
 
         self.btn_inject.setEnabled(False)
         self.status_label.setText("Injecting…")
-        self.results_label.setText("")
+
+        self.terminal.clear()
+        self._log(f"&gt; Starting injection — {len(all_files)} file(s)", "#00aaff")
+        self._log(f"&gt; Keywords: {', '.join(keywords)}", "#888888")
+        self._log("─" * 48, "#222222")
         self.progress_bar.setMaximum(len(all_files))
         self.progress_bar.setValue(0)
         self.progress_label.setText(f"0 / {len(all_files)}")
@@ -351,12 +348,19 @@ class InjectorTab(QWidget):
         errors = 0
 
         for i, fname in enumerate(all_files):
-            fname_lower = fname.lower()
-            matched_kw  = None
+            stem = os.path.splitext(fname)[0]  # filename without extension
+            # Crop name is everything after the last underscore
+            # e.g. fullbody1_face -> "face", img_torso_up -> "torso_up"
+            # We check the full stem too as fallback for files with no underscore
+            parts = stem.split("_")
+            # Try matching from the end: last part, then last 2 parts, etc.
+            # This handles multi-word crop names like "torso_up"
+            crop_segment = "_".join(parts[1:]).lower() if len(parts) > 1 else stem.lower()
+            matched_kw = None
 
-            # Find first keyword that matches this filename
+            # Match keyword against crop segment only (not the original filename prefix)
             for kw in keywords:
-                if kw in fname_lower:
+                if kw in crop_segment:
                     matched_kw = kw
                     break
 
@@ -375,13 +379,17 @@ class InjectorTab(QWidget):
                                 j += 1
                         shutil.move(src, dest)
                         matched_counts[matched_kw] += 1
+                        self._log(f"  {fname}  →  {os.path.basename(target_folder)}/", "#00ff66")
                     except Exception as e:
                         print(f"Inject error on {fname}: {e}")
+                        self._log(f"  ✖ ERROR: {fname}", "#ff3333")
                         errors += 1
                 else:
                     unmatched_files.append(fname)
+                    self._log(f"  ? {fname}  →  unmatched/", "#ff8800")
             else:
                 unmatched_files.append(fname)
+                self._log(f"  ? {fname}  →  unmatched/", "#ff8800")
 
             self.progress_bar.setValue(i + 1)
             self.progress_label.setText(f"{i + 1} / {len(all_files)}")
@@ -407,6 +415,8 @@ class InjectorTab(QWidget):
         if errors:
             lines.append(f"\n✖  {errors} error(s) — check console")
 
-        self.results_label.setText("\n".join(lines))
+
+        self._log("─" * 48, "#222222")
+        self._log(f"&gt; Done — {total_moved} injected, {len(unmatched_files)} unmatched", "#00aaff")
         self.status_label.setText("Done.")
         self.btn_inject.setEnabled(True)

@@ -21,21 +21,48 @@ HELP_TEXT = {
         "3. Auto mode — MediaPipe detects pose keypoints and automatically "
         "crops all four default types for each image.\n\n"
         "4. Use Advanced Crop Settings to rename crop types, change their "
-        "colors, or add up to 4 custom crop buttons.\n\n"
-        "5. Training Target sets the output resolution. Signal Strength "
-        "shows how clean the crop will be for training — lower upscale = better."
+        "colors, or add up to 4 custom crop buttons. Custom crops only work "
+        "in manual mode — auto mode always uses the default 4.\n\n"
+        "5. Training Target sets the output resolution. Framing Signal Strength "
+        "shows how clean the crop will be for training — it measures how much "
+        "the image needs to be upscaled to hit your training resolution. "
+        "Lower upscale = sharper signal = better training quality.\n\n"
+        "6. Auto-advance moves to the next image automatically after saving all crop types."
     ),
     "Signal Studio": (
         "Signal Studio",
         "Grade and filter your cropped images by training signal quality.\n\n"
-        "1. Load a folder of cropped images.\n\n"
-        "2. Each image gets a signal strength score based on how much "
-        "upscaling is needed to hit the training resolution.\n\n"
-        "3. Images are sorted into tiers: High, Mid, Low, Reject.\n\n"
-        "4. Use Cropped Image Mode to grade images that are already "
-        "cropped and organized into subfolders.\n\n"
-        "5. Organize by signal strength moves images into tier subfolders "
-        "so you can review and delete weak images before training."
+        "1. Load a folder of cropped images and set your training resolution.\n\n"
+        "2. Signal strength is based on how much upscaling is needed to hit "
+        "the training resolution — lower upscale = better signal.\n\n"
+        "3. Images are graded into tiers: Good, Okay, Risky, Discard.\n\n"
+        "4. If 'Organize by signal strength' is checked, images are physically "
+        "moved into subfolders (good/, okay/, risky/, discard/) after grading. "
+        "If unchecked, the run only grades and scores the dataset without "
+        "moving any files — useful for a quick quality check.\n\n"
+        "5. The dataset grade (A+ through F) summarizes overall quality based "
+        "on the ratio of good/okay/risky/discard images across the full set.\n\n"
+        "6. Cropped Image Mode grades images already organized into crop type "
+        "subfolders from Crop Studio.\n\n"
+        "7. Flatten moves all files back to the main folder and removes subfolders — "
+        "available as soon as any folder with subfolders is loaded."
+    ),
+    "Injector": (
+        "Injector",
+        "Inject cropped images into the correct dataset subfolders by keyword.\n\n"
+        "1. Select a source folder containing mixed cropped images.\n\n"
+        "2. Select the output folder — your main dataset folder with subfolders "
+        "like 10_face, 15_torso, etc.\n\n"
+        "3. face, torso, thigh, and fullbody are matched by default. "
+        "Files are matched by the crop name suffix in their filename "
+        "(e.g. photo1_face.png → face subfolder).\n\n"
+        "4. Add custom keywords using the + buttons if your dataset uses "
+        "non-standard crop names. Up to 8 custom keywords total.\n\n"
+        "5. Auto-detect automatically reads your current crop type setup from "
+        "Crop Studio — including any renamed defaults or custom crop buttons — "
+        "and fills the keyword fields for you.\n\n"
+        "6. Any file with no matching subfolder is moved into an "
+        "'unmatched' folder in the source for review."
     ),
     "File Studio": (
         "File Studio",
@@ -45,24 +72,10 @@ HELP_TEXT = {
         "basename_1, basename_2, etc.\n\n"
         "3. Choose an output format, or keep originals.\n\n"
         "4. Optionally generate blank .txt caption files alongside "
-        "each renamed image.\n\n"
+        "each renamed image — useful for adding captions to new additions.\n\n"
         "5. Re-run on a folder to close gaps after deletions. "
-        "Enable 'Rename existing captions' to keep them paired.\n\n"
+        "Enable 'Rename existing captions' to keep them paired with their images.\n\n"
         "Files are renamed in place — nothing is deleted."
-    ),
-    "Injector": (
-        "Injector",
-        "Inject cropped images into the correct dataset subfolders.\n\n"
-        "1. Select a source folder containing mixed cropped images "
-        "(e.g. after flattening from Signal Studio).\n\n"
-        "2. Select the output folder — your main dataset folder "
-        "with subfolders like 10_face, 15_torso, etc.\n\n"
-        "3. face, torso, thigh, and fullbody are matched by default. "
-        "Add custom keywords using the + buttons if needed.\n\n"
-        "4. Hit Inject — files are matched by keyword in their "
-        "filename to the matching subfolder in the output.\n\n"
-        "5. Any file with no matching subfolder is moved into "
-        "an 'unmatched' folder in the source for review."
     ),
 }
 
@@ -81,8 +94,8 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(self.crop_studio_tab,    "Crop Studio")
         self.tabs.addTab(self.signal_checker_tab, "Signal Studio")
-        self.tabs.addTab(self.file_studio_tab,    "File Studio")
         self.tabs.addTab(self.injector_tab,       "Injector")
+        self.tabs.addTab(self.file_studio_tab,    "File Studio")
 
         self.injector_tab.set_crop_studio(self.crop_studio_tab)
 
