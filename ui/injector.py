@@ -56,7 +56,7 @@ def _find_target_folder(output_dir: str, keyword: str) -> Optional[str]:
 def _get_active_keywords(custom_fields) -> List[str]:
     keywords = list(DEFAULT_KEYWORDS)
     for field in custom_fields:
-        if field.isVisible():
+        if field.isEnabled():
             val = field.text().strip().lower()
             if val:
                 keywords.append(val)
@@ -101,14 +101,42 @@ class InjectorTab(QWidget):
         left.addWidget(_divider())
         left.addSpacing(16)
 
-        # Custom keyword slots
-        self._default_chips: List[QPushButton] = []  # kept for compat
+        # Custom keyword slots — 4 left, 4 right
+        self._default_chips: List[QPushButton] = []
         self._custom_fields: List[QLineEdit] = []
+        self._add_btns: List[QPushButton] = []
 
-        left.addWidget(QLabel("Custom keywords:"))
+        kw_header = QHBoxLayout()
+        kw_header.addWidget(QLabel("Custom keywords:"))
+        kw_header.addStretch(1)
+        self._auto_detect_btn = QPushButton("↻  Auto-detect")
+        self._auto_detect_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 13px; font-weight: bold;
+                background-color: #1a3a2a; color: #00cc66;
+                border: 1px solid #00aa44; border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: #1f4a30; }
+        """)
+        self._auto_detect_btn.setToolTip("Auto-fill from custom crop types in Crop Studio")
+        self._auto_detect_btn.clicked.connect(self._auto_detect_keywords)
+        kw_header.addWidget(self._auto_detect_btn)
+        left.addLayout(kw_header)
         left.addSpacing(6)
 
-        for i in range(4):
+        # Two columns of 4
+        cols_widget = QWidget()
+        cols = QHBoxLayout(cols_widget)
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(12)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(6)
+        right_col = QVBoxLayout()
+        right_col.setSpacing(6)
+
+        for i in range(8):
             row_widget = QWidget()
             row = QHBoxLayout(row_widget)
             row.setContentsMargins(0, 0, 0, 0)
@@ -118,22 +146,30 @@ class InjectorTab(QWidget):
             add_btn = QPushButton("+")
             add_btn.setStyleSheet(ADD_BTN_STYLE)
             add_btn.setFocusPolicy(Qt.ClickFocus)
+            add_btn.setFixedSize(34, 34)
 
             field = QLineEdit()
-            field.setPlaceholderText(f"Custom keyword {i + 1}")
-            field.setMinimumHeight(34)
-            field.hide()
+            field.setPlaceholderText(f"Keyword {i + 1}")
+            field.setFixedSize(370 if i < 4 else 340, 34)
+            field.setEnabled(False)
+            field.setStyleSheet("background-color: transparent; border: none; color: transparent;")
 
             add_btn.clicked.connect(lambda _, f=field, b=add_btn: self._expand_custom(f, b))
 
             row.addWidget(add_btn)
             row.addWidget(field)
 
-            left.addWidget(row_widget)
-            left.addSpacing(6)
+            if i < 4:
+                left_col.addWidget(row_widget)
+            else:
+                right_col.addWidget(row_widget)
 
             self._custom_fields.append(field)
+            self._add_btns.append(add_btn)
 
+        cols.addLayout(left_col)
+        cols.addLayout(right_col)
+        left.addWidget(cols_widget)
         left.addSpacing(16)
 
         # Inject button
@@ -202,19 +238,56 @@ class InjectorTab(QWidget):
         root.addSpacing(32)
         root.addLayout(right, 1)
 
+    def set_crop_studio(self, crop_studio_tab):
+        """Called by main window to give injector access to crop studio."""
+        self._crop_studio = crop_studio_tab
+
+    def _auto_detect_keywords(self):
+        if not hasattr(self, '_crop_studio') or self._crop_studio is None:
+            QMessageBox.information(self, "Auto-detect", "No Crop Studio data available.")
+            return
+
+        from core.config import CROP_TYPES as ORIGINAL_DEFAULTS
+        original_labels = {ct.label for ct in ORIGINAL_DEFAULTS}
+
+        # Any crop type whose label no longer matches the original is custom
+        custom_types = [
+            ct for ct in self._crop_studio.active_crop_types
+            if not ct.is_default or ct.label not in original_labels
+        ]
+
+        if not custom_types:
+            QMessageBox.information(self, "Auto-detect", "No custom crop types found in Crop Studio.")
+            return
+
+        # Reset all custom fields first
+        for field, btn in zip(self._custom_fields, self._add_btns):
+            self._collapse_custom(field, btn)
+
+        # Fill top-down, left column first then right
+        for i, ct in enumerate(custom_types[:8]):
+            field = self._custom_fields[i]
+            btn = self._add_btns[i]
+            self._expand_custom(field, btn)
+            # Use the suffix (minus leading _) as the inject keyword
+            keyword = ct.suffix.lstrip("_")
+            field.setText(keyword)
+
     # ──────────────────────────────────────────────
     # EXPAND CUSTOM FIELD
     # ──────────────────────────────────────────────
     def _expand_custom(self, field: QLineEdit, btn: QPushButton):
-        field.show()
+        field.setEnabled(True)
+        field.setStyleSheet("")
+        field.setFocus()
         btn.setText("−")
         btn.clicked.disconnect()
         btn.clicked.connect(lambda: self._collapse_custom(field, btn))
-        field.setFocus()
 
     def _collapse_custom(self, field: QLineEdit, btn: QPushButton):
-        field.hide()
+        field.setEnabled(False)
         field.clear()
+        field.setStyleSheet("background-color: transparent; border: none; color: transparent;")
         btn.setText("+")
         btn.clicked.disconnect()
         btn.clicked.connect(lambda: self._expand_custom(field, btn))
