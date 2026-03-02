@@ -862,6 +862,10 @@ class CropStudioTab(QWidget):
         if key == _Qt.Key_2: self.select_crop_type(1); return True
         if key == _Qt.Key_3: self.select_crop_type(2); return True
         if key == _Qt.Key_4: self.select_crop_type(3); return True
+        if key == _Qt.Key_5 and len(self.active_crop_types) > 4: self.select_crop_type(4); return True
+        if key == _Qt.Key_6 and len(self.active_crop_types) > 5: self.select_crop_type(5); return True
+        if key == _Qt.Key_7 and len(self.active_crop_types) > 6: self.select_crop_type(6); return True
+        if key == _Qt.Key_8 and len(self.active_crop_types) > 7: self.select_crop_type(7); return True
         if key == _Qt.Key_Q: self.prev_image();              return True
         if key == _Qt.Key_W: self.next_image();              return True
         if key == _Qt.Key_S: self.save_crop();               return True
