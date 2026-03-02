@@ -9,6 +9,7 @@ from ui.crop_studio    import CropStudioTab
 from ui.file_studio    import FileStudioTab
 from ui.signal_checker import SignalCheckerTab
 from ui.injector       import InjectorTab
+from ui.full_auto      import FullAutoTab
 
 
 HELP_TEXT = {
@@ -64,6 +65,26 @@ HELP_TEXT = {
         "6. Any file with no matching subfolder is moved into an "
         "'unmatched' folder in the source for review."
     ),
+    "Full Auto": (
+        "Full Auto",
+        "Automates the entire pipeline from raw images to a fully prepared dataset.\n\n"
+        "1. Select your input folder — the raw full-body images to crop from.\n\n"
+        "2. Select your staging folder — a temporary folder where crops are saved "
+        "before being checked and injected into the dataset.\n\n"
+        "3. Select your LoRA dataset folder — your main dataset folder with subfolders "
+        "like 10_face, 15_torso, etc. already set up.\n\n"
+        "4. Set your training resolution and hit Run — the pipeline does everything automatically:\n\n"
+        "   Phase 1 — Auto Crop: MediaPipe crops each image into 4 sequential "
+        "crops (face, torso, thigh, full body).\n\n"
+        "   Phase 2 — Signal Check & Cull: Each set of 4 crops is graded. "
+        "If a set has more than 1 risky or discard quality image, the entire "
+        "set is deleted. Only sets with 3+ good/okay crops survive.\n\n"
+        "   Phase 3 — Inject: Surviving crops are sorted into the correct "
+        "dataset subfolders by crop type.\n\n"
+        "   Phase 4 — Rename & Captions: All files in each subfolder are "
+        "renamed sequentially using the subfolder name as prefix with _C suffix "
+        "to mark them as crops, and blank caption files are created for any new images."
+    ),
     "File Studio": (
         "File Studio",
         "Bulk rename and prepare your image files for training.\n\n"
@@ -91,11 +112,13 @@ class MainWindow(QMainWindow):
         self.file_studio_tab    = FileStudioTab()
         self.signal_checker_tab = SignalCheckerTab()
         self.injector_tab       = InjectorTab()
+        self.full_auto_tab      = FullAutoTab()
 
         self.tabs.addTab(self.crop_studio_tab,    "Crop Studio")
         self.tabs.addTab(self.signal_checker_tab, "Signal Studio")
         self.tabs.addTab(self.injector_tab,       "Injector")
         self.tabs.addTab(self.file_studio_tab,    "File Studio")
+        self.tabs.addTab(self.full_auto_tab,      "Full Auto")
 
         self.injector_tab.set_crop_studio(self.crop_studio_tab)
 
