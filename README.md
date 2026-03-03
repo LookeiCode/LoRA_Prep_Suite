@@ -372,6 +372,7 @@ Each image has 4 crops as previously stated. This is called a "set."
   </a>
 </div>
 
+<br>
 
 **Phase 2 — Signal Check & Cull**
 
@@ -385,6 +386,7 @@ The terminal shows each passing set with individual crop grades color-coded by t
   </a>
 </div>
 
+<br>
 
 **Phase 3 — Inject**
 
@@ -396,6 +398,7 @@ Passing crops are moved into the correct subfolders of your dataset based on cro
   </a>
 </div>
 
+<br>
 
 **Phase 4 — Rename & Captions**
 
