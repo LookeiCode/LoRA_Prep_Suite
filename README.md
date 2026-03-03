@@ -366,8 +366,8 @@ MediaPipe detects the pose in each image and generates 4 sequential crops: full 
 Each image has 4 crops as previously stated. This is called a "set."
 
 <div align="center">
-  <a href="assets/FullAuto1.JPG">
-    <img src="assets/FullAuto1.JPG" width="900" />
+  <a href="assets/FullAutoP1.JPG">
+    <img src="assets/FullAutoP1.JPG" width="900" />
   </a>
 </div>
 
@@ -377,8 +377,8 @@ Every set of crops is graded using the same upscale ratio math as Signal Studio 
 The terminal shows each passing set with individual crop grades color-coded by tier. The set name itself is colored based on the average upscale ratio across all kept crops. It's a mathematical representation of how that full set is expected to perform during training.
 
 <div align="center">
-  <a href="assets/FullAuto2.JPG">
-    <img src="assets/FullAuto2.JPG" width="900" />
+  <a href="assets/FullAutoP2.JPG">
+    <img src="assets/FullAutoP2.JPG" width="900" />
   </a>
 </div>
 
@@ -386,8 +386,8 @@ The terminal shows each passing set with individual crop grades color-coded by t
 Passing crops are moved into the correct subfolders of your dataset based on crop type keyword matching.
 
 <div align="center">
-  <a href="assets/FullAuto3.JPG">
-    <img src="assets/FullAuto3.JPG" width="900" />
+  <a href="assets/FullAutoP3.JPG">
+    <img src="assets/FullAutoP3.JPG" width="900" />
   </a>
 </div>
 
@@ -395,8 +395,8 @@ Passing crops are moved into the correct subfolders of your dataset based on cro
 All images in each subfolder are renamed sequentially using the subfolder name as a prefix, with the `_C` suffix preserved. Blank caption files are created for every new image.
 
 <div align="center">
-  <a href="assets/FullAuto4.JPG">
-    <img src="assets/FullAuto4.JPG" width="900" />
+  <a href="assets/FullAutoP4.JPG">
+    <img src="assets/FullAutoP4.JPG" width="900" />
   </a>
 </div>
 
@@ -566,7 +566,7 @@ The developer reserves the right to modify these terms at any time. Continued us
 
 ## License
 
-Non-Commercial License
+**Non-Commercial License**
 
 **Copyright (c) 2026 LookeiCode**
 
