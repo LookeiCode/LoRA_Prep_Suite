@@ -1,0 +1,48 @@
+LoRA Prep Suite License
+
+Copyright (c) 2026 LookeiCode
+
+1. Grant of Permission
+
+Permission is granted to use, copy, modify, and redistribute this
+software and its source code for personal, educational, research,
+and internal business purposes.
+
+You may use this software to prepare datasets, train models,
+and create commercial outputs derived from your work, including
+models, images, or other generated content.
+
+2. Commercial Distribution Restriction
+
+You may NOT, without prior written permission from the copyright holder:
+
+- Sell this software.
+- Redistribute this software for a fee.
+- Offer this software as part of a paid product, subscription, or SaaS platform.
+- Integrate this software into a commercial service where access to
+  the software itself is monetized.
+- Repackage or resell this software under a different name for profit.
+
+If you wish to distribute, bundle, host, or otherwise monetize
+this software or provide paid access to it, you must obtain a
+separate commercial license from the copyright holder.
+
+Commercial licensing terms, including royalty arrangements,
+may be negotiated upon request.
+
+3. Attribution
+
+Redistributions of this software, modified or unmodified,
+must retain this license text and the original copyright notice.
+
+4. No Warranty
+
+This software is provided "as is", without warranty of any kind,
+express or implied, including but not limited to warranties of
+merchantability, fitness for a particular purpose, and non-infringement.
+
+5. Limitation of Liability
+
+In no event shall the author be liable for any claim, damages,
+or other liability arising from, out of, or in connection with
+the software or the use or other dealings in the software.
