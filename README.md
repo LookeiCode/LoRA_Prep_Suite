@@ -361,6 +361,7 @@ Crop, signal check, inject, rename; all in one click. It is designed for people 
 **The 4 phases:**
 
 **Phase 1 — Auto Crop**
+
 MediaPipe detects the pose in each image and generates 4 sequential crops: full body, thigh, torso, and face. Each crop is saved to the staging folder with a `_C` suffix marking it as a crop.
 
 Each image has 4 crops as previously stated. This is called a "set."
@@ -371,7 +372,9 @@ Each image has 4 crops as previously stated. This is called a "set."
   </a>
 </div>
 
+
 **Phase 2 — Signal Check & Cull**
+
 Every set of crops is graded using the same upscale ratio math as Signal Studio or the Framing Signal Strength in Crop Studio. Discard-quality crops are always removed immediately. If a set has fewer than 3 Good or Okay crops remaining, or more than 1 Risky crop, the entire set is deleted. Only clean sets continue to ensure strong LoRA training.
 
 The terminal shows each passing set with individual crop grades color-coded by tier. The set name itself is colored based on the average upscale ratio across all kept crops. It's a mathematical representation of how that full set is expected to perform during training.
@@ -382,7 +385,9 @@ The terminal shows each passing set with individual crop grades color-coded by t
   </a>
 </div>
 
+
 **Phase 3 — Inject**
+
 Passing crops are moved into the correct subfolders of your dataset based on crop type keyword matching.
 
 <div align="center">
@@ -391,7 +396,9 @@ Passing crops are moved into the correct subfolders of your dataset based on cro
   </a>
 </div>
 
+
 **Phase 4 — Rename & Captions**
+
 All images in each subfolder are renamed sequentially using the subfolder name as a prefix, with the `_C` suffix preserved. Blank caption files are created for every new image.
 
 <div align="center">
@@ -399,6 +406,7 @@ All images in each subfolder are renamed sequentially using the subfolder name a
     <img src="assets/FullAutoP4.JPG" width="900" />
   </a>
 </div>
+
 
 **IN ACTION**
 <div align="center">
