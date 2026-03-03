@@ -16,7 +16,9 @@ class ImageCanvas(QWidget):
         super().__init__()
         self.setMouseTracking(True)
         self.setCursor(Qt.CrossCursor)
-        self.setMinimumSize(640, 480)
+        self.setFixedSize(640, 540)
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         self._pixmap:              Optional[QPixmap]         = None
         self._img_size_px:         Optional[Tuple[int, int]] = None

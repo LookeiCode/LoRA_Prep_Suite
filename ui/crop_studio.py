@@ -84,10 +84,15 @@ class CropStudioTab(QWidget):
     # ──────────────────────────────────────────────
     def _build_ui(self):
         # ── Folder controls ──
+        from PySide6.QtWidgets import QSizePolicy as SP
         self.input_label  = QLabel("Input: (not set)")
         self.output_label = QLabel("Output: (not set)")
-        self.input_label.setWordWrap(True)
-        self.output_label.setWordWrap(True)
+        self.input_label.setWordWrap(False)
+        self.output_label.setWordWrap(False)
+        self.input_label.setFixedHeight(20)
+        self.output_label.setFixedHeight(20)
+        self.input_label.setSizePolicy(SP.Ignored, SP.Fixed)
+        self.output_label.setSizePolicy(SP.Ignored, SP.Fixed)
         self.btn_input  = QPushButton("Select Input Folder")
         self.btn_output = QPushButton("Select Output Folder")
         self.btn_input.clicked.connect(self.pick_input_folder)
@@ -103,6 +108,9 @@ class CropStudioTab(QWidget):
 
         self.status_label = QLabel("No images loaded.")
         self.status_label.setStyleSheet("color: #EAEAEA;")
+        self.status_label.setFixedHeight(20)
+        self.status_label.setWordWrap(False)
+        self.status_label.setSizePolicy(SP.Ignored, SP.Fixed)
 
         # ── Tile buttons built in _build_left_widget ──
         self.tile_buttons: List[CropTile] = []
@@ -123,7 +131,7 @@ class CropStudioTab(QWidget):
         self.dimension_label.setAlignment(Qt.AlignCenter)
         self.dimension_label.setWordWrap(True)
         self.dimension_label.setFixedWidth(220)
-        self.dimension_label.setMinimumHeight(52)
+        self.dimension_label.setFixedHeight(52)
 
         self.training_target_label = QLabel("Training target:")
         self.training_target_combo = QComboBox()
@@ -318,9 +326,10 @@ class CropStudioTab(QWidget):
         right_panel.addWidget(self.btn_adv_settings)
 
         self.root_layout = QHBoxLayout(self)
+        self.root_layout.setSizeConstraint(QHBoxLayout.SetNoConstraint)
         self.root_layout.addWidget(self.left_widget)
         self.root_layout.addLayout(center_panel, 5)
-        self.root_layout.addLayout(right_panel,  2)
+        self.root_layout.addLayout(right_panel, 2)
 
     def _rebuild_tiles(self):
         """Update tile buttons in-place. Container is fixed height — tiles resize to fill it."""
@@ -687,6 +696,9 @@ class CropStudioTab(QWidget):
         buf.seek(0)
         pm = QPixmap()
         pm.loadFromData(buf.getvalue(), "PNG")
+
+        # Scale pixmap to fit canvas so Qt never uses native image size for layout
+        pm = pm.scaled(640, 540, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
         self.canvas.set_image(pm, (ow, oh))
         self.status_label.setText(
