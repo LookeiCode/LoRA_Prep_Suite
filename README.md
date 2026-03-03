@@ -7,7 +7,7 @@ It automates the most time-consuming parts of dataset preparation:
 - Cropping images into consistent framing categories
 - Checking resolution quality before training
 - Removing weak or unusable images quickly
-- Sorting files into Kohya-style subfolders
+- Sorting files into LoRA dataset subfolders
 - Renaming images and generating caption files fast
 
 Everything runs locally. No uploads. No cloud services.
@@ -407,6 +407,7 @@ All images in each subfolder are renamed sequentially using the subfolder name a
   </a>
 </div>
 
+<br>
 
 **IN ACTION**
 <div align="center">
