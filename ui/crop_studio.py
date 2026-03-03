@@ -583,7 +583,7 @@ class CropStudioTab(QWidget):
         self.auto_anim_timer.start(200)
 
     def auto_step_forward(self):
-        crop_order = ["full", "thigh", "torso", "face"]
+        crop_order = ["fullbody", "thigh", "torso", "face"]
         if self.auto_step >= len(crop_order):
             self.auto_anim_timer.stop()
             self.save_auto_crops(self.images[self.auto_current_index])

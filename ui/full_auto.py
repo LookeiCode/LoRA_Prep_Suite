@@ -43,7 +43,7 @@ TIERS = [
     ("Risky",   3.50),
     ("Discard", float("inf")),
 ]
-CROP_ORDER = ["full", "thigh", "torso", "face"]
+CROP_ORDER = ["fullbody", "thigh", "torso", "face"]
 
 
 def _get_tier(upscale: float) -> str:

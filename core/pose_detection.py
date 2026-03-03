@@ -76,7 +76,7 @@ class PoseDetector:
         face_bottom = min(h, nose[1] + half)
 
         return {
-            "full":  (min_x, top_full, max_x, bottom_full),
+            "fullbody":  (min_x, top_full, max_x, bottom_full),
             "thigh": (min_x, top_full, max_x, bottom_thigh),
             "torso": (min_x, top_full, max_x, bottom_torso),
             "face":  (face_left, face_top, face_right, face_bottom),

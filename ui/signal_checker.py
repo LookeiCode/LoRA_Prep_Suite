@@ -19,7 +19,7 @@ TIERS = [
     ("Discard", "discard", "#ff3333", float("inf")),
 ]
 
-CROP_FOLDERS = {"face", "thigh", "torso", "full"}
+CROP_FOLDERS = {"face", "thigh", "torso", "fullbody"}
 
 BTN_STYLE = """
     QPushButton {
@@ -228,7 +228,7 @@ class SignalCheckerTab(QWidget):
         self.btn_delete_discard.clicked.connect(self.delete_discard)
         btn_layout.addWidget(self.btn_delete_discard)
 
-        self.btn_flatten = QPushButton("Flatten Folder")
+        self.btn_flatten = QPushButton("Flatten — Move All Back & Remove Subfolders")
         self.btn_flatten.setStyleSheet(BTN_STYLE)
         self.btn_flatten.setEnabled(False)
         self.btn_flatten.clicked.connect(self.flatten_folders)

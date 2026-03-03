@@ -353,16 +353,22 @@ class InjectorTab(QWidget):
             # e.g. fullbody1_face -> "face", img_torso_up -> "torso_up"
             # We check the full stem too as fallback for files with no underscore
             parts = stem.split("_")
-            # Try matching from the end: last part, then last 2 parts, etc.
-            # This handles multi-word crop names like "torso_up"
             crop_segment = "_".join(parts[1:]).lower() if len(parts) > 1 else stem.lower()
             matched_kw = None
 
-            # Match keyword against crop segment only (not the original filename prefix)
+            # First try matching against crop segment (after first underscore)
             for kw in keywords:
                 if kw in crop_segment:
                     matched_kw = kw
                     break
+
+            # Fallback: match against full stem if no match found
+            if not matched_kw:
+                full_stem = stem.lower()
+                for kw in keywords:
+                    if kw in full_stem:
+                        matched_kw = kw
+                        break
 
             src = os.path.join(self.source_path, fname)
 

@@ -18,5 +18,5 @@ CROP_TYPES = [
     CropType("face",  "Face",      "_face",  QColor(0, 200, 120)),
     CropType("torso", "Torso Up",  "_torso", QColor(30, 144, 255)),
     CropType("thigh", "Thigh Up",  "_thigh", QColor(255, 215, 0)),
-    CropType("full",  "Full Body", "_full",  QColor(220, 20, 60)),
+    CropType("fullbody",  "Full Body", "_fullbody",  QColor(220, 20, 60)),
 ]
