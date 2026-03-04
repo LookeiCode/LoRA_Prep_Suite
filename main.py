@@ -32,8 +32,8 @@ HELP_TEXT = {
     ),
     "Signal Studio": (
         "Signal Studio",
-        "Grade and filter your cropped images by training signal quality.\n\n"
-        "1. Load a folder of cropped images and set your training resolution.\n\n"
+        "Grade and filter your (cropped) images by training signal quality.\n\n"
+        "1. Load a folder of (cropped) images and set your training resolution.\n\n"
         "2. Signal strength is based on how much upscaling is needed to hit "
         "the training resolution — lower upscale = better signal.\n\n"
         "3. Images are graded into tiers: Good, Okay, Risky, Discard.\n\n"
@@ -95,7 +95,6 @@ HELP_TEXT = {
         "4. Optionally generate blank .txt caption files alongside "
         "each renamed image — useful for adding captions to new additions.\n\n"
         "5. Re-run on a folder to close gaps after deletions. "
-        "Enable 'Rename existing captions' to keep them paired with their images.\n\n"
         "Files are renamed in place — nothing is deleted."
     ),
 }
@@ -104,7 +103,7 @@ HELP_TEXT = {
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LoRA Prep Suite")
+        self.setWindowTitle("LoRA Prep Suite | v1.0.0")
 
         self.tabs = QTabWidget()
 
